@@ -742,6 +742,13 @@ def get_gps_atom(gps_atom_info, f):
         )
         return None
 
+    if len(data) < 12:
+        logger.debug(
+            f"Skipping at {atom_pos:x}: "
+            f"atom too small ({len(data)} bytes)"
+        )
+        return None
+
     expected_type, expected_magic = 'free', 'GPS '
     atom_size1, atom_type, magic = struct.unpack_from(
         '>I4s4s', data
