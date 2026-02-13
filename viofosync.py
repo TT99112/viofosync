@@ -230,8 +230,8 @@ def download_file(base_url, recording, destination, group_name):
         destination, group_name, recording.filename
     )
 
-    # Build download URL
-    cleaned = recording.filepath.replace('A:', '').replace(
+    # Build download URL — strip drive letter (A: for SD, B: for SSD)
+    cleaned = re.sub(r'^[A-Z]:', '', recording.filepath).replace(
         '\\', '/'
     )
     url = f"{base_url}/{cleaned}"
