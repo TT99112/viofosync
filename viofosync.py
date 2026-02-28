@@ -60,7 +60,8 @@ max_disk_used_percent = 90
 cutoff_date = None
 socket_timeout = 10.0
 
-MAX_DOWNLOAD_ATTEMPTS = 3
+DEFAULT_DOWNLOAD_ATTEMPTS = 1
+max_download_attempts = DEFAULT_DOWNLOAD_ATTEMPTS
 RETRY_BACKOFF = 5  # seconds, multiplied by attempt number
 
 # Recording namedtuple matching Viofo's file information
@@ -120,6 +121,22 @@ def to_downloaded_recording(filename, grouping):
 def parse_viofo_datetime(time_str):
     """Parse the datetime string from Viofo's format."""
     return datetime.datetime.strptime(time_str, "%Y/%m/%d %H:%M:%S")
+
+
+def positive_int(value):
+    """argparse type: integer >= 1."""
+    try:
+        parsed = int(value)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(
+            f"invalid int value: '{value}'"
+        ) from e
+
+    if parsed < 1:
+        raise argparse.ArgumentTypeError(
+            "value must be greater than or equal to 1"
+        )
+    return parsed
 
 
 def get_dashcam_filenames(base_url):
@@ -316,7 +333,7 @@ def download_file(base_url, recording, destination, group_name):
     """Downloads a file from the Viofo dashcam to the destination.
 
     Returns (downloaded: bool, speed_str: str|None).
-    Uses HEAD to check size, retries up to MAX_DOWNLOAD_ATTEMPTS,
+    Uses HEAD to check size, retries up to max_download_attempts,
     and verifies integrity after download.
     """
     if group_name:
@@ -392,7 +409,7 @@ def download_file(base_url, recording, destination, group_name):
     os.close(tmp_fd)
 
     try:
-        for attempt in range(1, MAX_DOWNLOAD_ATTEMPTS + 1):
+        for attempt in range(1, max_download_attempts + 1):
             try:
                 start = time.perf_counter()
                 with urllib.request.urlopen(
@@ -405,7 +422,8 @@ def download_file(base_url, recording, destination, group_name):
                     f"Download attempt {attempt} failed for "
                     f"{recording.filename}: {e}"
                 )
-                time.sleep(RETRY_BACKOFF * attempt)
+                if attempt < max_download_attempts:
+                    time.sleep(RETRY_BACKOFF * attempt)
                 continue
 
             actual_size = os.path.getsize(tmp_path)
@@ -419,7 +437,8 @@ def download_file(base_url, recording, destination, group_name):
                     f"{human_size(actual_size)}/"
                     f"{human_size(expected_size)}"
                 )
-                time.sleep(RETRY_BACKOFF * attempt)
+                if attempt < max_download_attempts:
+                    time.sleep(RETRY_BACKOFF * attempt)
                 continue
 
             # Success — atomic move into place
@@ -435,7 +454,7 @@ def download_file(base_url, recording, destination, group_name):
         # All attempts exhausted
         logger.error(
             f"Failed to download {recording.filename} "
-            f"after {MAX_DOWNLOAD_ATTEMPTS} attempts"
+            f"after {max_download_attempts} attempts"
         )
         return False, None
     except socket.timeout as e:
@@ -947,6 +966,13 @@ def parse_args():
         help="Connection timeout in seconds",
     )
     parser.add_argument(
+        "--download-attempts",
+        default=DEFAULT_DOWNLOAD_ATTEMPTS,
+        metavar="ATTEMPTS",
+        type=positive_int,
+        help="How many times to retry a failed download",
+    )
+    parser.add_argument(
         "-v", "--verbose", action="count", default=0,
         help="Increase output verbosity",
     )
@@ -987,6 +1013,7 @@ def parse_args():
 def run():
     global dry_run, read_only
     global max_disk_used_percent, cutoff_date, socket_timeout
+    global max_download_attempts
 
     args = parse_args()
 
@@ -1013,6 +1040,7 @@ def run():
 
     socket_timeout = args.timeout
     socket.setdefaulttimeout(socket_timeout)
+    max_download_attempts = args.download_attempts
 
     if args.keep:
         keep_match = re.fullmatch(

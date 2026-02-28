@@ -57,6 +57,7 @@ The following environment variables can be set to configure the behavior of the 
 | `PRIORITY` | Download order: `date` (oldest first) or `rdate` (newest first) | `date` |
 | `MAX_USED_DISK` | Stop downloading if disk usage exceeds this percentage (5-98) | `90` |
 | `TIMEOUT` | Connection timeout in seconds | `30` |
+| `DOWNLOAD_ATTEMPTS` | Number of attempts for each download (must be >= 1) | `1` |
 | `VERBOSE` | Logging verbosity level (0 = normal, 1+ = debug) | `0` |
 | `QUIET` | Set to any value to only log errors | |
 | `CRON` | Set to any value for reduced cron-mode logging | `1` |

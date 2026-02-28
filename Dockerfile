@@ -17,6 +17,7 @@ ENV ADDRESS="" \
     PRIORITY="" \
     MAX_USED_DISK="" \
     TIMEOUT="" \
+    DOWNLOAD_ATTEMPTS="" \
     VERBOSE=0 \
     QUIET="" \
     CRON=1 \

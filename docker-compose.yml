@@ -46,6 +46,9 @@ services:
       # Sets the timeout in seconds for connecting to the dashcam.
       TIMEOUT: 10.0
 
+      # Number of attempts for each download (must be >= 1).
+      DOWNLOAD_ATTEMPTS: 1
+
       # Set to a number greater than zero to increase logging verbosity.
       VERBOSE: 0
 

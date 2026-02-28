@@ -15,6 +15,9 @@ disk_usage=${MAX_USED_DISK:+--max-used-disk $MAX_USED_DISK}
 # timeout set if TIMEOUT set
 timeout=${TIMEOUT:+--timeout $TIMEOUT}
 
+# download attempts set if DOWNLOAD_ATTEMPTS set
+download_attempts=${DOWNLOAD_ATTEMPTS:+--download-attempts $DOWNLOAD_ATTEMPTS}
+
 # as many verbose options as the value in VERBOSE
 verbose=${VERBOSE:+$(if [[ $VERBOSE -gt 0 ]]; then for i in $(seq 1 $VERBOSE); do echo --verbose; done; fi)}
 
@@ -36,4 +39,4 @@ gps_extract="${GPS_EXTRACT:+--gps-extract}"
 html="${HTML:+--html}"
 
 /viofosync.py ${ADDRESS} --destination /recordings ${keep} ${grouping} ${priority} ${disk_usage} ${timeout} ${verbose} ${gps_extract} \
-    ${quiet} ${read_only} ${cron} ${dry_run} ${html}
+    ${download_attempts} ${quiet} ${read_only} ${cron} ${dry_run} ${html}
