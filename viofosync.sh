@@ -38,5 +38,8 @@ gps_extract="${GPS_EXTRACT:+--gps-extract}"
 # html scrape mode if HTML set to anything
 html="${HTML:+--html}"
 
+# delete from camera after successful download if DELETE_AFTER_SYNC set
+delete_after_sync="${DELETE_AFTER_SYNC:+--delete-after-sync}"
+
 /viofosync.py ${ADDRESS} --destination /recordings ${keep} ${grouping} ${priority} ${disk_usage} ${timeout} ${verbose} ${gps_extract} \
-    ${download_attempts} ${quiet} ${read_only} ${cron} ${dry_run} ${html}
+    ${download_attempts} ${quiet} ${read_only} ${cron} ${dry_run} ${html} ${delete_after_sync}

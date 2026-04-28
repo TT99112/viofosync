@@ -64,12 +64,24 @@ The following environment variables can be set to configure the behavior of the 
 | `GPS_EXTRACT` | Set to any value to extract GPS data and create `.gpx` files alongside recordings | |
 | `READ_ONLY` | Set to any value to only sync read-only (locked) recordings | |
 | `HTML` | Set to any value to use alternative HTML scraping instead of the XML API. Recommended for cameras that are slow or timeout responding to the XML file listing request | |
+| `DELETE_AFTER_SYNC` | Set to any value to delete each file from the camera immediately after it has been successfully downloaded and verified locally. Read-only/locked files (RO folder) are never deleted. See [Warnings](#warnings) below. | |
 | `DRY_RUN` | Set to any value to show what would happen without downloading or deleting anything | |
 | `RUN_ONCE` | Set to any value to sync once and exit instead of running on a cron schedule | |
 
 ## XML vs HTML Mode
 
 By default, Viofo Sync uses the camera's XML API (`/?custom=1&cmd=3015&par=1`) to get the file listing. For some reason on my camera this started running very slowly so setting `HTML=1` switches to scraping the camera's HTTP directory listings (`/DCIM/Movie`, `/DCIM/Movie/Parking`, `/DCIM/Movie/RO`), which seem to load faster.
+
+## Warnings
+
+### DELETE_AFTER_SYNC
+
+`DELETE_AFTER_SYNC` permanently removes files from the dashcam's SD card. Before enabling it:
+
+- **Verify your destination is reliable.** If the download destination runs out of space or becomes unavailable mid-sync, files that were already deleted from the camera cannot be recovered.
+- **Read-only/locked files are never deleted.** Files stored under `/DCIM/Movie/RO/` or marked as locked on the camera are skipped regardless of this setting.
+- **Deletion is inline, not batched.** Each file is deleted from the camera immediately after it is successfully downloaded and the local copy is verified. If the script is interrupted partway through a sync, only the files that were already downloaded will be removed from the camera.
+- **`--dry-run` is safe.** When `DRY_RUN` is set alongside `DELETE_AFTER_SYNC`, the script logs what it would delete without actually sending any delete requests to the camera.
 
 ## License
 

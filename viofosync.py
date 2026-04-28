@@ -26,7 +26,7 @@
 # FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 # OTHER DEALINGS IN THE SOFTWARE.
 
-__version__ = "1.1"
+__version__ = "1.2"
 
 import argparse
 import datetime
@@ -56,6 +56,7 @@ cron_logger = logging.getLogger("cron")
 # Globals
 dry_run = False
 read_only = False
+delete_after_sync = False
 max_disk_used_percent = 90
 cutoff_date = None
 socket_timeout = 10.0
@@ -477,6 +478,31 @@ def download_file(base_url, recording, destination, group_name):
                 pass
 
 
+def verify_local_file(local_path):
+    """Returns True if local_path exists and has non-zero size."""
+    try:
+        return os.path.exists(local_path) and os.path.getsize(local_path) > 0
+    except OSError:
+        return False
+
+
+def delete_from_camera(address, filepath, timeout):
+    """Requests deletion of filepath on the camera via the XML API.
+
+    Returns True when the camera responds HTTP 200 with Status 0,
+    raises on connection/parse errors.
+    """
+    encoded = urllib.parse.quote(filepath, safe="/")
+    url = f"http://{address}/?custom=1&cmd=4003&str={encoded}"
+    with urllib.request.urlopen(url, timeout=timeout) as resp:
+        if resp.getcode() != 200:
+            return False
+        xml_data = resp.read().decode("utf-8")
+    root = ET.fromstring(xml_data)
+    status_elem = root.find(".//Status")
+    return status_elem is not None and status_elem.text.strip() == "0"
+
+
 def get_downloaded_recordings(destination, grouping):
     """Reads destination dir and returns set of (filename, date)."""
     group_name_glob = group_name_globs[grouping]
@@ -576,6 +602,54 @@ def prepare_destination(destination, grouping):
     cleanup_empty_dirs(destination, grouping)
 
 
+def _handle_camera_deletion(address, recording, dest_path):
+    """Post-download deletion: verify local file then delete from camera."""
+    is_locked = (
+        (recording.filepath and "/RO/" in recording.filepath)
+        or recording.attr == 33
+    )
+    if is_locked:
+        logger.info(
+            f"Skipping deletion of locked file: "
+            f"{recording.filename}"
+        )
+        return
+
+    if dry_run:
+        logger.info(
+            f"[DRY RUN] Would delete from camera: "
+            f"{recording.filename}"
+        )
+        return
+
+    if not verify_local_file(dest_path):
+        logger.warning(
+            f"Failed to delete from camera: "
+            f"{recording.filename} "
+            f"(local file missing or empty)"
+        )
+        return
+
+    try:
+        if delete_from_camera(
+            address, recording.filepath, socket_timeout
+        ):
+            logger.info(
+                f"Deleted from camera: {recording.filename}"
+            )
+        else:
+            logger.warning(
+                f"Failed to delete from camera: "
+                f"{recording.filename} "
+                f"(camera returned error)"
+            )
+    except Exception as e:
+        logger.warning(
+            f"Failed to delete from camera: "
+            f"{recording.filename} ({e})"
+        )
+
+
 def sync(address, destination, grouping, download_priority,
          recording_filter, args):
     """Synchronizes dashcam recordings with destination dir."""
@@ -621,11 +695,16 @@ def sync(address, destination, grouping, download_priority,
         downloaded, _ = download_file(
             base_url, recording, destination, group_name
         )
-        if downloaded and args.gps_extract:
+        if downloaded:
             dest_path = get_filepath(
                 destination, group_name, recording.filename
             )
-            extract_gps_data(dest_path)
+            if args.gps_extract:
+                extract_gps_data(dest_path)
+            if delete_after_sync:
+                _handle_camera_deletion(
+                    address, recording, dest_path
+                )
 
     logger.info("Sync complete")
     return True
@@ -997,6 +1076,11 @@ def parse_args():
         help="Extract GPS data and create GPX files",
     )
     parser.add_argument(
+        "--delete-after-sync", action="store_true",
+        help="Delete files from camera after successful download "
+        "(skips locked/RO files)",
+    )
+    parser.add_argument(
         "--html", action="store_true",
         help="Use fast HTML directory scraping instead of "
         "slow XML API to list recordings",
@@ -1011,7 +1095,7 @@ def parse_args():
 # --- Entry point ---
 
 def run():
-    global dry_run, read_only
+    global dry_run, read_only, delete_after_sync
     global max_disk_used_percent, cutoff_date, socket_timeout
     global max_download_attempts
 
@@ -1037,6 +1121,13 @@ def run():
     read_only = args.read_only
     if read_only:
         logger.info("READ ONLY mode: locked files only.")
+
+    delete_after_sync = args.delete_after_sync
+    if delete_after_sync:
+        logger.info(
+            "DELETE AFTER SYNC: camera files will be deleted "
+            "after successful download."
+        )
 
     socket_timeout = args.timeout
     socket.setdefaulttimeout(socket_timeout)
