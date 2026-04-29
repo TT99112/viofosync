@@ -1,6 +1,6 @@
 # Viofo Sync
 
-Viofo Sync copies recordings from a Viofo dashcam to a NAS or local folder.
+Viofo Sync copies videos and photos from a Viofo dashcam to a NAS or local folder.
 
 It supports three workflows:
 
@@ -8,6 +8,7 @@ It supports three workflows:
 - Local import from a mounted SD card, SSD, or copied dashcam folder
 - Optional normal-driving clip merging with `ffmpeg`
 
+Photos are organized by the same grouping rules as videos.
 Parking recordings such as `PF` and `PR` are imported but not merged.
 
 ## Quick Start
@@ -79,7 +80,7 @@ services:
 
 Files are copied into `/recordings` by default. Set `MOVE_IMPORTED=1` if you want files removed from the import source after the destination copy is verified.
 
-If both `IMPORT_SOURCE` and `ADDRESS` are set, each run checks the import source first. When Viofo files are found it imports them; when the import source is empty or unavailable it falls back to normal Wi-Fi sync.
+If both `IMPORT_SOURCE` and `ADDRESS` are set, each run checks the import source first. When Viofo media files are found it imports them; when the import source is empty or unavailable it falls back to normal Wi-Fi sync.
 
 For fastest imports when the source and destination are on the same NAS volume, mount their parent folder once and use paths inside that one mount:
 

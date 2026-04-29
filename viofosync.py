@@ -26,7 +26,7 @@
 # FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 # OTHER DEALINGS IN THE SOFTWARE.
 
-__version__ = "1.3"
+__version__ = "1.4"
 
 import argparse
 import datetime
@@ -92,14 +92,15 @@ group_name_globs = {
 downloaded_filename_glob = (
     "[0-9][0-9][0-9][0-9]_[0-9][0-9][0-9][0-9]"
     "_[0-9][0-9][0-9][0-9][0-9][0-9]"
-    "_*[FR].MP4"
+    "_*.*"
 )
 
 # Downloaded recording filename regular expression
 downloaded_filename_re = re.compile(
     r"^(?P<year>\d{4})_(?P<month>\d{2})(?P<day>\d{2})"
     r"_(?P<hour>\d{2})(?P<minute>\d{2})(?P<second>\d{2})"
-    r"_(?P<sequence>\d+)(?P<camera>.+)\.MP4$",
+    r"_(?P<sequence>\d+)(?P<camera>.+)"
+    r"\.(?P<extension>MP4|JPE?G)$",
     re.IGNORECASE,
 )
 
@@ -107,7 +108,8 @@ downloaded_filename_re = re.compile(
 filename_re = re.compile(
     r"(?P<year>\d{4})_(?P<month>\d{2})(?P<day>\d{2})"
     r"_(?P<hour>\d{2})(?P<minute>\d{2})(?P<second>\d{2})"
-    r"_(?P<sequence>\d+)(?P<camera>.+)\.MP4",
+    r"_(?P<sequence>\d+)(?P<camera>.+)"
+    r"\.(?P<extension>MP4|JPE?G)",
     re.IGNORECASE,
 )
 
@@ -188,6 +190,11 @@ def parse_recording_filename(filename):
     }
 
 
+def is_video_file(filename):
+    """Returns True when filename is a video recording."""
+    return os.path.splitext(filename)[1].lower() == ".mp4"
+
+
 def get_dashcam_filenames(base_url):
     """Gets the recording filenames from the Viofo dashcam."""
     try:
@@ -245,15 +252,15 @@ def get_dashcam_filenames(base_url):
 
 # HTML directory listing regex
 html_file_re = re.compile(
-    r'<a href="(?P<filepath>[^"]+\.MP4)">'
+    r'<a href="(?P<filepath>[^"]+\.(?:MP4|JPE?G))">'
     r'<b>(?P<filename>[^<]+)</b></a>'
     r'<td align=right>\s*(?P<size>[\d.]+)\s*(?P<unit>[KMGT]?B)',
     re.IGNORECASE,
 )
 
 # Directories to scrape on the dashcam
-DCIM_DIRS = ["/DCIM/Movie", "/DCIM/Movie/Parking"]
-DCIM_DIRS_RO = ["/DCIM/Movie/RO"]
+DCIM_DIRS = ["/DCIM/Movie", "/DCIM/Movie/Parking", "/DCIM/Photo"]
+DCIM_DIRS_RO = ["/DCIM/Movie/RO", "/DCIM/Photo/RO"]
 
 
 def parse_html_size(size_str, unit):
@@ -829,7 +836,8 @@ def organize_local_recordings(source, destination, grouping,
         )
         if changed:
             imported += 1
-        if changed and gps_extract and dest_path and not dry_run:
+        if (changed and gps_extract and dest_path and not dry_run
+                and is_video_file(recording.filename)):
             extract_gps_data(dest_path)
 
     logger.info(f"Local import complete: {imported} files imported")
@@ -1111,6 +1119,7 @@ def merge_chunks(source, grouping, merged_destination,
     recordings = [
         recording for recording in all_recordings
         if recording.mode != "parking"
+        and is_video_file(recording.filename)
     ]
     recordings = with_durations(recordings)
     groups = build_merge_groups(recordings, merge_gap, grouping)
@@ -1230,7 +1239,8 @@ def sync(address, destination, grouping, download_priority,
             destination, group_name, recording.filename
         )
         if downloaded and local_available:
-            if args.gps_extract and not dry_run:
+            if (args.gps_extract and not dry_run
+                    and is_video_file(recording.filename)):
                 extract_gps_data(dest_path)
         if delete_after_sync and (verified or dry_run):
             _handle_camera_deletion(

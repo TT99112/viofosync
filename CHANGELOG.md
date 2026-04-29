@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## 1.4 (2026-04-29)
+
+* Add Viofo photo (`.jpg` / `.jpeg`) sync and local import support, including the `/DCIM/Photo` HTML directory.
+* Keep GPS extraction and chunk merging video-only.
+* Add `DESTINATION` environment support for faster same-volume local imports.
+* When both `IMPORT_SOURCE` and `ADDRESS` are set, fall back to Wi-Fi sync when the import source has no Viofo media files.
+
 ## 1.3 (2026-04-29)
 
 * Add local import mode via `IMPORT_SOURCE` / `--import-source` for organizing recordings from a mounted SD card, SSD, or copied folder without Wi-Fi sync.
