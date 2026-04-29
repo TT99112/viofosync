@@ -1,0 +1,12 @@
+.git
+.github
+.idea
+.venv
+__pycache__
+.pytest_cache
+.DS_Store
+tmp
+test
+*.pyc
+*.pyo
+*.tar
