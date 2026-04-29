@@ -1,97 +1,50 @@
 services:
   viofosync:
-    image: robxyz/viofosync
+    image: tt99112/viofosync:latest
     container_name: viofosync
     restart: unless-stopped
 
+    # Run as your NAS user if you do not want root-owned recordings.
+    # user: "1000:1000"
+
     volumes:
-    # Recording download destination. Change only the part before the colon.
-    - /dashcam-recordings:/recordings:rw
-    # Optional local import source for mounted SD cards/drives.
-    # - /path/to/mounted/dashcam-drive:/import:rw
+      # NAS recording destination.
+      - /dashcam-recordings:/recordings:rw
+
+      # Optional source for SD card / SSD / copied dashcam files.
+      # - /path/to/mounted/dashcam-drive:/import:rw
 
     environment:
-      # Dashcam address
-      # ADDRESS: 192.168.1.230
+      # Wi-Fi sync. Leave empty when using IMPORT_SOURCE only.
+      ADDRESS: ''
 
-      # Set these to the desired destination directory's user id and group id.
-      PUID: 1000
-      PGID: 1000
-
-      # Set to the same timezone as the dashcam. For the complete list of possible values, see:
-      # https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
       TZ: Europe/London
-
-      # Priority to download recordings. Pick "date" to download from oldest to
-      # newest; pick "rdate" to download from oldest to newest; pick "type" to
-      # download manual, event (all types), normal and parking recordings in
-      # that order.
-      PRIORITY: date
-
-      # Groups downloaded recordings in directories: 'daily', 'weekly',
-      # 'monthly', 'yearly' and 'none' are supported.
       GROUPING: daily
-
-      # Retention period of downloaded recordings. Recordings prior to the
-      # retention period will be removed from the destination. Accepted units
-      # are 'd' for days and 'w' for weeks. If no unit is indicated, days are
-      # assumed.
+      PRIORITY: date
       KEEP: 2w
 
-      # Store and manage Read Only (locked) video recordings.
-      READ_ONLY: false
+      # Run interval in seconds when RUN_ONCE is not set.
+      SYNC_INTERVAL: 600
 
-      # Stops downloading if the amount of used disk space exceeds the indicated
-      # percentage value.
       MAX_USED_DISK: 90
-
-      # Sets the timeout in seconds for connecting to the dashcam.
-      TIMEOUT: 10.0
-
-      # Number of attempts for each download (must be >= 1).
+      TIMEOUT: 10
       DOWNLOAD_ATTEMPTS: 1
-
-      # Set to a number greater than zero to increase logging verbosity.
       VERBOSE: 0
 
-      # Set to any value to quiet down logs: only unexpected errors will be
-      # logged.
-      QUIET: ''
-
-      # Makes it so downloads of normal recordings and unexpected error
-      # conditions are logged. Can be set to '' to disable.
-      CRON: ''
-
-      # Set to any value to enable GPS data extraction and GPX file creation.
-      GPS_EXTRACT: ''
-
-      # If set to any value, makes it so that the script communicates what it
-      # would do without actually doing anything.
-      DRY_RUN: ''
-
-      # Use HTML directory scraping alternative to XML API.
-      # Recommended for cameras that are slow to generate the XML listing.
+      # Optional modes. Use 1 to enable; leave empty or use false/0 to disable.
       HTML: ''
-
-      # Delete camera files after they are successfully downloaded and
-      # verified in /recordings. Locked/RO files are skipped.
+      READ_ONLY: ''
+      GPS_EXTRACT: ''
       DELETE_AFTER_SYNC: ''
+      DRY_RUN: ''
+      RUN_ONCE: ''
 
-      # Import from a locally mounted drive instead of syncing over Wi-Fi.
-      # Mount the drive above and set this to /import.
+      # Local import mode.
       IMPORT_SOURCE: ''
-
-      # Move imported local files instead of copying them.
       MOVE_IMPORTED: ''
 
-      # Merge sequential chunks by camera using ffmpeg.
+      # Normal-driving chunk merging. Parking files are not merged.
       MERGE_CHUNKS: ''
-
-      # Maximum gap, in seconds, between chunks to treat as one session.
       MERGE_GAP: 2
-
-      # Optional output directory for merged files.
       MERGED_DESTINATION: ''
-
-      # Delete original chunks after a successful merge.
       DELETE_MERGED_SOURCES: ''
