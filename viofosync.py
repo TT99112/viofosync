@@ -645,6 +645,19 @@ def prepare_destination(destination, grouping):
     cleanup_empty_dirs(destination, grouping)
 
 
+def destination_is_too_full(destination):
+    """Returns True when destination disk usage exceeds the limit."""
+    usage = shutil.disk_usage(destination)
+    used_percent = int((usage.used / usage.total) * 100)
+    if used_percent >= max_disk_used_percent:
+        logger.warning(
+            f"Disk usage is {used_percent}% at {destination}; "
+            f"limit is {max_disk_used_percent}%"
+        )
+        return True
+    return False
+
+
 def path_is_within(path, root):
     """Returns True when path is inside root."""
     if not root:
@@ -808,6 +821,9 @@ def organize_local_recordings(source, destination, grouping,
     for recording in recordings:
         if cutoff_date and recording.datetime.date() < cutoff_date:
             continue
+        if destination_is_too_full(destination):
+            logger.warning("Stopping local import due to disk usage")
+            break
         changed, dest_path = copy_or_move_local_recording(
             recording, destination, grouping, move_imported
         )
@@ -980,6 +996,10 @@ def merge_recording_group(group, merged_destination,
     )
     if os.path.exists(output_path):
         logger.info(f"Merged file already exists: {output_path}")
+        return False
+
+    if destination_is_too_full(output_dir):
+        logger.warning("Skipping merge due to disk usage")
         return False
 
     if dry_run:
@@ -1182,6 +1202,9 @@ def sync(address, destination, grouping, download_priority,
     for i, recording in enumerate(dashcam_recordings, start=1):
         if cutoff_date and recording.datetime.date() < cutoff_date:
             continue
+        if destination_is_too_full(destination):
+            logger.warning("Stopping sync due to disk usage")
+            break
         group_name = get_group_name(
             recording.datetime, grouping
         )
@@ -1665,6 +1688,7 @@ def run():
     socket_timeout = args.timeout
     socket.setdefaulttimeout(socket_timeout)
     max_download_attempts = args.download_attempts
+    max_disk_used_percent = args.max_used_disk
 
     if args.keep:
         keep_match = re.fullmatch(

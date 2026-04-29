@@ -8,6 +8,7 @@
 * Merge only normal driving recordings (`F`/`R`), leave parking recordings (`PF`/`PR`) as individual files, respect grouping boundaries, and default chunk merging to a strict 2 second continuity gap.
 * Harden delete-after-sync so camera deletion only runs when the local file size was verified.
 * Fix `RUN_ONCE` container exit handling after successful one-shot runs.
+* Clean up Docker runtime configuration, boolean environment parsing, README, stale helper files, and disk-usage enforcement.
 
 ## 1.2 (2026-04-28)
 

@@ -13,6 +13,8 @@ env_enabled() {
 }
 
 args=()
+app_dir="${APP_DIR:-/app}"
+python_bin="${PYTHON_BIN:-python3}"
 
 if [[ -n ${ADDRESS:-} ]]; then
     args+=("$ADDRESS")
@@ -102,4 +104,4 @@ if env_enabled "${DELETE_MERGED_SOURCES:-}"; then
     args+=(--delete-merged-sources)
 fi
 
-exec python /app/viofosync.py "${args[@]}" "$@"
+exec "$python_bin" "$app_dir/viofosync.py" "${args[@]}" "$@"

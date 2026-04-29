@@ -183,6 +183,22 @@ DOCKER_PASSWORD
 - Parking timelapse duration is not real elapsed time, so parking files stay separate.
 - This project is based on BlackVue Sync by Alessandro Colomba and includes Viofo GPS extraction work based on Sergei Franco's research.
 
+## Development
+
+Run the basic local checks:
+
+```bash
+python3 -m py_compile viofosync.py
+bash -n entrypoint.sh
+bash -n viofosync.sh
+```
+
+Build the image locally:
+
+```bash
+docker build -t viofosync:local .
+```
+
 ## License
 
 MIT. See [COPYING](COPYING).
