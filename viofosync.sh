@@ -20,7 +20,7 @@ if [[ -n ${ADDRESS:-} ]]; then
     args+=("$ADDRESS")
 fi
 
-args+=(--destination /recordings)
+args+=(--destination "${DESTINATION:-/recordings}")
 
 if [[ -n ${KEEP:-} ]]; then
     args+=(--keep "$KEEP")

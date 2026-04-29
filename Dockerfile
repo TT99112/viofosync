@@ -7,6 +7,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 ENV ADDRESS="" \
+    DESTINATION="/recordings" \
     TZ="Europe/London" \
     GROUPING="daily" \
     PRIORITY="date" \

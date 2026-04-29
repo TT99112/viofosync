@@ -81,6 +81,19 @@ Files are copied into `/recordings` by default. Set `MOVE_IMPORTED=1` if you wan
 
 If both `IMPORT_SOURCE` and `ADDRESS` are set, each run checks the import source first. When Viofo files are found it imports them; when the import source is empty or unavailable it falls back to normal Wi-Fi sync.
 
+For fastest imports when the source and destination are on the same NAS volume, mount their parent folder once and use paths inside that one mount:
+
+```yaml
+volumes:
+  - /volume1/NAS_HDD/Dash_Cam_Footage:/dashcam:rw
+environment:
+  DESTINATION: /dashcam/Sync
+  IMPORT_SOURCE: /dashcam/SSD
+  MOVE_IMPORTED: 1
+```
+
+This lets local imports move files by rename instead of copying data between separate container mounts.
+
 Direct CLI usage:
 
 ```bash
@@ -137,7 +150,8 @@ environment:
 | Variable | Default | Description |
 |---|---:|---|
 | `ADDRESS` | | Dashcam IP or hostname for Wi-Fi sync |
-| `IMPORT_SOURCE` | | Local folder to import instead of Wi-Fi sync |
+| `DESTINATION` | `/recordings` | Folder where recordings are written |
+| `IMPORT_SOURCE` | | Local folder to import before Wi-Fi sync |
 | `GROUPING` | `none` | `none`, `daily`, `weekly`, `monthly`, or `yearly` |
 | `KEEP` | | Delete destination recordings older than this, e.g. `30d` or `4w` |
 | `PRIORITY` | `date` | `date` for oldest first, `rdate` for newest first |

@@ -13,10 +13,15 @@ services:
 
       # Optional source for SD card / SSD / copied dashcam files.
       # - /path/to/mounted/dashcam-drive:/import:rw
+      #
+      # For faster same-volume local moves, mount the parent folder once:
+      # - /path/to/Dash_Cam_Footage:/dashcam:rw
+      # Then set DESTINATION=/dashcam/Sync and IMPORT_SOURCE=/dashcam/SSD.
 
     environment:
       # Wi-Fi sync. Leave empty when using IMPORT_SOURCE only.
       ADDRESS: ''
+      DESTINATION: /recordings
 
       TZ: Europe/London
       GROUPING: daily
