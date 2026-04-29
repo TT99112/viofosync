@@ -3,11 +3,11 @@ set -u
 
 env_enabled() {
     case "${1:-}" in
-        ""|0|false|False|FALSE|no|No|NO)
-            return 1
+        1|true|True|TRUE|yes|Yes|YES|on|On|ON)
+            return 0
             ;;
         *)
-            return 0
+            return 1
             ;;
     esac
 }

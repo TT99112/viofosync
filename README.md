@@ -127,7 +127,7 @@ Keep `DELETE_MERGED_SOURCES` disabled until you have checked the merged output:
 
 ```yaml
 environment:
-  DELETE_MERGED_SOURCES: ''
+  DELETE_MERGED_SOURCES: 0
 ```
 
 ## Configuration
@@ -140,24 +140,24 @@ environment:
 | `KEEP` | | Delete destination recordings older than this, e.g. `30d` or `4w` |
 | `PRIORITY` | `date` | `date` for oldest first, `rdate` for newest first |
 | `SYNC_INTERVAL` | `600` | Seconds between runs when `RUN_ONCE` is not set |
-| `RUN_ONCE` | | Set to `1` to run once and exit |
-| `HTML` | | Set to `1` to list files from the dashcam HTML directory pages |
-| `READ_ONLY` | | Set to `1` to sync only locked/read-only recordings |
-| `GPS_EXTRACT` | | Set to `1` to write `.gpx` files beside recordings |
-| `DELETE_AFTER_SYNC` | | Set to `1` to delete verified files from the dashcam |
-| `MOVE_IMPORTED` | | Set to `1` to move local import files instead of copying |
-| `MERGE_CHUNKS` | | Set to `1` to merge normal driving chunks |
+| `RUN_ONCE` | `0` | Set to `1` to run once and exit |
+| `HTML` | `0` | Set to `1` to list files from the dashcam HTML directory pages |
+| `READ_ONLY` | `0` | Set to `1` to sync only locked/read-only recordings |
+| `GPS_EXTRACT` | `0` | Set to `1` to write `.gpx` files beside recordings |
+| `DELETE_AFTER_SYNC` | `0` | Set to `1` to delete verified files from the dashcam |
+| `MOVE_IMPORTED` | `0` | Set to `1` to move local import files instead of copying |
+| `MERGE_CHUNKS` | `0` | Set to `1` to merge normal driving chunks |
 | `MERGE_GAP` | `2` | Allowed seconds between consecutive normal chunks |
 | `MERGED_DESTINATION` | `/recordings/merged` | Optional merged-file output folder |
-| `DELETE_MERGED_SOURCES` | | Set to `1` to delete source chunks after a merge |
+| `DELETE_MERGED_SOURCES` | `0` | Set to `1` to delete source chunks after a merge |
 | `MAX_USED_DISK` | `90` | Stop downloading when destination disk usage reaches this percent |
 | `TIMEOUT` | `10` | Dashcam connection timeout in seconds |
 | `DOWNLOAD_ATTEMPTS` | `1` | Retry attempts per file |
 | `VERBOSE` | `0` | Set above `0` for debug logging |
-| `QUIET` | | Set to `1` to log only errors |
-| `DRY_RUN` | | Set to `1` to show actions without changing files |
+| `QUIET` | `0` | Set to `1` to log only errors |
+| `DRY_RUN` | `0` | Set to `1` to show actions without changing files |
 
-Boolean options accept `1`, `true`, or any non-empty value. Use an empty value, `0`, or `false` to disable them.
+Boolean options accept `1`, `true`, `yes`, or `on` to enable them. Use `0`, `false`, an empty value, or anything else to disable them.
 
 ## Docker Hub Publishing
 

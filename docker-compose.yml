@@ -30,21 +30,22 @@ services:
       TIMEOUT: 10
       DOWNLOAD_ATTEMPTS: 1
       VERBOSE: 0
+      QUIET: 0
 
-      # Optional modes. Use 1 to enable; leave empty or use false/0 to disable.
-      HTML: ''
-      READ_ONLY: ''
-      GPS_EXTRACT: ''
-      DELETE_AFTER_SYNC: ''
-      DRY_RUN: ''
-      RUN_ONCE: ''
+      # Optional modes. Use 1 to enable, 0 to disable.
+      HTML: 0
+      READ_ONLY: 0
+      GPS_EXTRACT: 0
+      DELETE_AFTER_SYNC: 0
+      DRY_RUN: 0
+      RUN_ONCE: 0
 
       # Local import mode.
       IMPORT_SOURCE: ''
-      MOVE_IMPORTED: ''
+      MOVE_IMPORTED: 0
 
       # Normal-driving chunk merging. Parking files are not merged.
-      MERGE_CHUNKS: ''
+      MERGE_CHUNKS: 0
       MERGE_GAP: 2
       MERGED_DESTINATION: ''
-      DELETE_MERGED_SOURCES: ''
+      DELETE_MERGED_SOURCES: 0
