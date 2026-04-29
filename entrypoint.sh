@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
-set -e
+set -u
 
-/setuid.sh \
-&& su -m dashcam /viofosync.sh
+trap 'exit 0' INT TERM
 
-if [[ -z $RUN_ONCE ]]; then
-    crond -f
+if [[ -n ${RUN_ONCE:-} ]]; then
+    exec /app/viofosync.sh "$@"
 fi
+
+while true; do
+    /app/viofosync.sh "$@" || true
+    sleep "${SYNC_INTERVAL:-600}" &
+    wait $!
+done

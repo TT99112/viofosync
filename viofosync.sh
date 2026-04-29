@@ -90,4 +90,4 @@ if [[ -n $DELETE_MERGED_SOURCES ]]; then
     args+=(--delete-merged-sources)
 fi
 
-exec /viofosync.py "${args[@]}"
+exec python /app/viofosync.py "${args[@]}" "$@"
