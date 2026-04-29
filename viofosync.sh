@@ -1,45 +1,93 @@
 #!/usr/bin/env bash
 
-# keep option set if KEEP set
-keep=${KEEP:+--keep $KEEP}
+args=()
 
-# grouping option if GROUPING set
-grouping=${GROUPING:+--grouping $GROUPING}
+if [[ -n $ADDRESS ]]; then
+    args+=("$ADDRESS")
+fi
 
-# download priority option set if PRIORITY set
-priority=${PRIORITY:+--priority $PRIORITY}
+args+=(--destination /recordings)
 
-# disk usage option set if USAGE set
-disk_usage=${MAX_USED_DISK:+--max-used-disk $MAX_USED_DISK}
+if [[ -n $KEEP ]]; then
+    args+=(--keep "$KEEP")
+fi
 
-# timeout set if TIMEOUT set
-timeout=${TIMEOUT:+--timeout $TIMEOUT}
+if [[ -n $GROUPING ]]; then
+    args+=(--grouping "$GROUPING")
+fi
 
-# download attempts set if DOWNLOAD_ATTEMPTS set
-download_attempts=${DOWNLOAD_ATTEMPTS:+--download-attempts $DOWNLOAD_ATTEMPTS}
+if [[ -n $PRIORITY ]]; then
+    args+=(--priority "$PRIORITY")
+fi
 
-# as many verbose options as the value in VERBOSE
-verbose=${VERBOSE:+$(if [[ $VERBOSE -gt 0 ]]; then for i in $(seq 1 $VERBOSE); do echo --verbose; done; fi)}
+if [[ -n $MAX_USED_DISK ]]; then
+    args+=(--max-used-disk "$MAX_USED_DISK")
+fi
 
-# dry-run option if DRY_RUN set to anything
-quiet="${QUIET:+--quiet}"
+if [[ -n $TIMEOUT ]]; then
+    args+=(--timeout "$TIMEOUT")
+fi
 
-# read_only option if READ_ONLY set to anything
-read_only="${READ_ONLY:+--read-only}"
+if [[ -n $DOWNLOAD_ATTEMPTS ]]; then
+    args+=(--download-attempts "$DOWNLOAD_ATTEMPTS")
+fi
 
-# cron option if CRON set to anything
-cron="${CRON:+--cron}"
+if [[ ${VERBOSE:-0} =~ ^[0-9]+$ ]] && [[ ${VERBOSE:-0} -gt 0 ]]; then
+    for _ in $(seq 1 "$VERBOSE"); do
+        args+=(--verbose)
+    done
+fi
 
-# dry-run option if DRY_RUN set to anything
-dry_run="${DRY_RUN:+--dry-run}"
+if [[ -n $QUIET ]]; then
+    args+=(--quiet)
+fi
 
-gps_extract="${GPS_EXTRACT:+--gps-extract}"
+if [[ -n $READ_ONLY ]]; then
+    args+=(--read-only)
+fi
 
-# html scrape mode if HTML set to anything
-html="${HTML:+--html}"
+if [[ -n $CRON ]]; then
+    args+=(--cron)
+fi
 
-# delete from camera after successful download if DELETE_AFTER_SYNC set
-delete_after_sync="${DELETE_AFTER_SYNC:+--delete-after-sync}"
+if [[ -n $DRY_RUN ]]; then
+    args+=(--dry-run)
+fi
 
-/viofosync.py ${ADDRESS} --destination /recordings ${keep} ${grouping} ${priority} ${disk_usage} ${timeout} ${verbose} ${gps_extract} \
-    ${download_attempts} ${quiet} ${read_only} ${cron} ${dry_run} ${html} ${delete_after_sync}
+if [[ -n $GPS_EXTRACT ]]; then
+    args+=(--gps-extract)
+fi
+
+if [[ -n $HTML ]]; then
+    args+=(--html)
+fi
+
+if [[ -n $DELETE_AFTER_SYNC ]]; then
+    args+=(--delete-after-sync)
+fi
+
+if [[ -n $IMPORT_SOURCE ]]; then
+    args+=(--import-source "$IMPORT_SOURCE")
+fi
+
+if [[ -n $MOVE_IMPORTED ]]; then
+    args+=(--move-imported)
+fi
+
+if [[ -n $MERGE_CHUNKS ]]; then
+    args+=(--merge-chunks)
+fi
+
+if [[ -n $MERGE_GAP ]]; then
+    args+=(--merge-gap "$MERGE_GAP")
+fi
+
+if [[ -n $MERGED_DESTINATION ]]; then
+    args+=(--merged-destination "$MERGED_DESTINATION")
+fi
+
+if [[ -n $DELETE_MERGED_SOURCES ]]; then
+    args+=(--delete-merged-sources)
+fi
+
+exec /viofosync.py "${args[@]}"

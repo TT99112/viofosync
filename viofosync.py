@@ -26,7 +26,7 @@
 # FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 # OTHER DEALINGS IN THE SOFTWARE.
 
-__version__ = "1.2"
+__version__ = "1.3"
 
 import argparse
 import datetime
@@ -38,6 +38,7 @@ import re
 import shutil
 import socket
 import struct
+import subprocess
 import tempfile
 import time
 import urllib
@@ -64,11 +65,18 @@ socket_timeout = 10.0
 DEFAULT_DOWNLOAD_ATTEMPTS = 1
 max_download_attempts = DEFAULT_DOWNLOAD_ATTEMPTS
 RETRY_BACKOFF = 5  # seconds, multiplied by attempt number
+DEFAULT_MERGE_GAP_SECONDS = 2.0
+FALLBACK_SEGMENT_SECONDS = (180.0, 300.0)
 
 # Recording namedtuple matching Viofo's file information
 Recording = namedtuple(
     "Recording",
     "filename filepath size timecode datetime attr",
+)
+
+LocalRecording = namedtuple(
+    "LocalRecording",
+    "filepath filename size datetime sequence camera mode tag duration",
 )
 
 # Group name globs, keyed by grouping
@@ -138,6 +146,46 @@ def positive_int(value):
             "value must be greater than or equal to 1"
         )
     return parsed
+
+
+def non_negative_float(value):
+    """argparse type: float >= 0."""
+    try:
+        parsed = float(value)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(
+            f"invalid float value: '{value}'"
+        ) from e
+
+    if parsed < 0:
+        raise argparse.ArgumentTypeError(
+            "value must be greater than or equal to 0"
+        )
+    return parsed
+
+
+def parse_recording_filename(filename):
+    """Parses a Viofo recording filename into recording metadata."""
+    m = filename_re.match(os.path.basename(filename))
+    if m is None:
+        return None
+
+    tag = m.group("camera").upper()
+    mode = "parking" if tag.startswith("P") else "normal"
+    camera = tag[1:] if mode == "parking" else tag
+
+    recording_datetime = datetime.datetime(
+        int(m.group("year")), int(m.group("month")),
+        int(m.group("day")), int(m.group("hour")),
+        int(m.group("minute")), int(m.group("second")),
+    )
+    return {
+        "datetime": recording_datetime,
+        "sequence": int(m.group("sequence")),
+        "camera": camera,
+        "mode": mode,
+        "tag": tag,
+    }
 
 
 def get_dashcam_filenames(base_url):
@@ -333,7 +381,8 @@ def human_speed(num_bytes, elapsed):
 def download_file(base_url, recording, destination, group_name):
     """Downloads a file from the Viofo dashcam to the destination.
 
-    Returns (downloaded: bool, speed_str: str|None).
+    Returns (downloaded: bool, speed_str: str|None,
+    local_available: bool, verified: bool).
     Uses HEAD to check size, retries up to max_download_attempts,
     and verifies integrity after download.
     """
@@ -352,11 +401,13 @@ def download_file(base_url, recording, destination, group_name):
     )
     url = f"{base_url}/{cleaned.lstrip('/')}"
 
-    # Check expected size via HEAD
+    # Check expected size via HEAD, falling back to exact XML metadata.
     try:
         expected_size = get_remote_size(url, socket_timeout)
     except Exception:
         expected_size = None
+    if expected_size is None and recording.timecode is not None:
+        expected_size = recording.size
 
     # Skip if already downloaded and size matches
     if os.path.exists(dest_filepath):
@@ -367,7 +418,7 @@ def download_file(base_url, recording, destination, group_name):
                     f"Skipping {recording.filename} "
                     f"({human_size(local_size)})"
                 )
-                return False, None
+                return False, None, True, True
             # Size mismatch — re-download
             logger.info(
                 f"Size mismatch for {recording.filename} "
@@ -375,30 +426,17 @@ def download_file(base_url, recording, destination, group_name):
                 f"{human_size(expected_size)}), "
                 f"re-downloading"
             )
-        elif recording.size is not None:
-            if local_size == recording.size:
-                logger.debug(
-                    f"Skipping {recording.filename} "
-                    f"({human_size(local_size)})"
-                )
-                return False, None
-            logger.info(
-                f"Size mismatch for {recording.filename} "
-                f"({human_size(local_size)}/"
-                f"{human_size(recording.size)}), "
-                f"re-downloading"
-            )
         else:
             logger.debug(
                 f"Already downloaded: {recording.filename}"
             )
-            return False, None
+            return False, None, local_size > 0, False
 
     if dry_run:
         logger.info(
             f"[DRY RUN] Would download: {recording.filename}"
         )
-        return True, None
+        return True, None, False, False
 
     # Atomic download with tempfile + retries
     dest_dir = os.path.dirname(dest_filepath)
@@ -450,14 +488,14 @@ def download_file(base_url, recording, destination, group_name):
                 f"Downloaded {recording.filename}: "
                 f"{size_str} in {elapsed:.1f}s ({speed_str})"
             )
-            return True, speed_str
+            return True, speed_str, True, expected_size is not None
 
         # All attempts exhausted
         logger.error(
             f"Failed to download {recording.filename} "
             f"after {max_download_attempts} attempts"
         )
-        return False, None
+        return False, None, False, False
     except socket.timeout as e:
         raise UserWarning(
             f"Timeout communicating with dashcam at "
@@ -468,7 +506,7 @@ def download_file(base_url, recording, destination, group_name):
             f"Remote end closed connection for "
             f"{recording.filename}; ignoring."
         )
-        return False, None
+        return False, None, False, False
     finally:
         # Clean up temp file if it still exists
         if os.path.exists(tmp_path):
@@ -478,10 +516,15 @@ def download_file(base_url, recording, destination, group_name):
                 pass
 
 
-def verify_local_file(local_path):
-    """Returns True if local_path exists and has non-zero size."""
+def verify_local_file(local_path, expected_size=None):
+    """Returns True if local_path exists and matches expected size."""
     try:
-        return os.path.exists(local_path) and os.path.getsize(local_path) > 0
+        if not os.path.exists(local_path):
+            return False
+        local_size = os.path.getsize(local_path)
+        if local_size <= 0:
+            return False
+        return expected_size is None or local_size == expected_size
     except OSError:
         return False
 
@@ -602,10 +645,462 @@ def prepare_destination(destination, grouping):
     cleanup_empty_dirs(destination, grouping)
 
 
+def path_is_within(path, root):
+    """Returns True when path is inside root."""
+    if not root:
+        return False
+    try:
+        real_path = os.path.realpath(path)
+        real_root = os.path.realpath(root)
+        return os.path.commonpath([real_path, real_root]) == real_root
+    except ValueError:
+        return False
+
+
+def local_file_is_locked(filepath):
+    """Best-effort check for files copied from the RO folder."""
+    parts = filepath.replace("\\", "/").upper().split("/")
+    return "RO" in parts
+
+
+def to_local_recording(filepath):
+    """Builds LocalRecording metadata for a local Viofo file."""
+    filename = os.path.basename(filepath)
+    metadata = parse_recording_filename(filename)
+    if metadata is None:
+        return None
+    try:
+        size = os.path.getsize(filepath)
+    except OSError as e:
+        logger.warning(f"Cannot stat {filepath}: {e}")
+        return None
+    return LocalRecording(
+        filepath, filename, size, metadata["datetime"],
+        metadata["sequence"], metadata["camera"],
+        metadata["mode"], metadata["tag"], None,
+    )
+
+
+def iter_local_recordings(source, excluded_roots=None):
+    """Yields Viofo recordings found under a local source path."""
+    excluded_roots = excluded_roots or []
+
+    if os.path.isfile(source):
+        recording = to_local_recording(source)
+        if recording and (not read_only
+                          or local_file_is_locked(source)):
+            yield recording
+        return
+
+    if not os.path.isdir(source):
+        raise RuntimeError(f"Import source is not a directory: {source}")
+
+    for dirpath, dirnames, filenames in os.walk(source):
+        dirnames[:] = [
+            dirname for dirname in dirnames
+            if not any(
+                path_is_within(os.path.join(dirpath, dirname), root)
+                for root in excluded_roots
+            )
+        ]
+
+        for filename in filenames:
+            filepath = os.path.join(dirpath, filename)
+            if any(path_is_within(filepath, root)
+                   for root in excluded_roots):
+                continue
+            if read_only and not local_file_is_locked(filepath):
+                continue
+            recording = to_local_recording(filepath)
+            if recording:
+                yield recording
+
+
+def copy_or_move_local_recording(recording, destination,
+                                 grouping, move_imported):
+    """Copies or moves one local recording into the destination tree."""
+    group_name = get_group_name(recording.datetime, grouping)
+    if group_name:
+        ensure_destination(os.path.join(destination, group_name))
+
+    dest_path = get_filepath(
+        destination, group_name, recording.filename
+    )
+
+    if os.path.realpath(recording.filepath) == os.path.realpath(
+        dest_path
+    ):
+        logger.debug(f"Already organized: {recording.filename}")
+        return False, dest_path
+
+    if os.path.exists(dest_path):
+        try:
+            dest_size = os.path.getsize(dest_path)
+        except OSError as e:
+            logger.warning(f"Cannot stat {dest_path}: {e}")
+            return False, None
+
+        if dest_size == recording.size:
+            logger.info(f"Already imported: {recording.filename}")
+            if move_imported and not dry_run:
+                try:
+                    os.remove(recording.filepath)
+                    logger.info(
+                        f"Removed duplicate source: "
+                        f"{recording.filepath}"
+                    )
+                except OSError as e:
+                    logger.warning(
+                        f"Could not remove duplicate source "
+                        f"{recording.filepath}: {e}"
+                    )
+            return False, dest_path
+
+        logger.warning(
+            f"Destination exists with a different size, skipping: "
+            f"{dest_path}"
+        )
+        return False, None
+
+    if dry_run:
+        action = "move" if move_imported else "copy"
+        logger.info(
+            f"[DRY RUN] Would {action} {recording.filepath} "
+            f"to {dest_path}"
+        )
+        return True, dest_path
+
+    try:
+        if move_imported:
+            shutil.move(recording.filepath, dest_path)
+            action = "Moved"
+        else:
+            shutil.copy2(recording.filepath, dest_path)
+            action = "Copied"
+    except OSError as e:
+        logger.error(f"Failed to import {recording.filepath}: {e}")
+        return False, None
+
+    if not verify_local_file(dest_path, recording.size):
+        logger.error(
+            f"Imported file failed verification: {dest_path}"
+        )
+        return False, None
+
+    logger.info(f"{action} {recording.filename} to {dest_path}")
+    return True, dest_path
+
+
+def organize_local_recordings(source, destination, grouping,
+                              move_imported, gps_extract):
+    """Imports recordings from a mounted drive into the destination."""
+    logger.info(f"Starting local import from {source}")
+    ensure_destination(destination)
+    prepare_destination(destination, grouping)
+
+    recordings = sorted(
+        iter_local_recordings(source),
+        key=lambda r: r.datetime,
+    )
+    logger.info(f"Found {len(recordings)} local recordings")
+
+    imported = 0
+    for recording in recordings:
+        if cutoff_date and recording.datetime.date() < cutoff_date:
+            continue
+        changed, dest_path = copy_or_move_local_recording(
+            recording, destination, grouping, move_imported
+        )
+        if changed:
+            imported += 1
+        if changed and gps_extract and dest_path and not dry_run:
+            extract_gps_data(dest_path)
+
+    logger.info(f"Local import complete: {imported} files imported")
+    return True
+
+
+def get_video_duration(filepath):
+    """Returns video duration in seconds using ffprobe."""
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe", "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                filepath,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        raise RuntimeError(
+            "ffprobe is required for --merge-chunks"
+        )
+
+    if result.returncode != 0:
+        logger.warning(
+            f"Could not read duration for {filepath}: "
+            f"{result.stderr.strip()}"
+        )
+        return None
+
+    try:
+        return float(result.stdout.strip())
+    except ValueError:
+        logger.warning(f"Could not parse duration for {filepath}")
+        return None
+
+
+def with_durations(recordings):
+    """Adds ffprobe durations to LocalRecording entries."""
+    hydrated = []
+    for recording in recordings:
+        duration = get_video_duration(recording.filepath)
+        hydrated.append(recording._replace(duration=duration))
+    return hydrated
+
+
+def should_merge_after(previous, current, merge_gap):
+    """Returns True when two chunks appear to be one session."""
+    if (previous.camera != current.camera
+            or previous.mode != current.mode):
+        return False
+
+    if previous.mode == "parking":
+        return False
+
+    if current.sequence <= previous.sequence:
+        return False
+
+    elapsed = (current.datetime - previous.datetime).total_seconds()
+    if elapsed <= 0:
+        return False
+
+    if previous.duration is not None:
+        previous_end = previous.datetime + datetime.timedelta(
+            seconds=previous.duration
+        )
+        gap = (current.datetime - previous_end).total_seconds()
+        return -1.0 <= gap <= merge_gap
+
+    return any(
+        abs(elapsed - segment_seconds) <= merge_gap
+        for segment_seconds in FALLBACK_SEGMENT_SECONDS
+    )
+
+
+def merge_stream_key(recording, grouping):
+    """Returns the grouping boundary and stream for merge decisions."""
+    return (
+        get_group_name(recording.datetime, grouping),
+        recording.mode,
+        recording.camera,
+    )
+
+
+def sort_stream_key(stream_key):
+    """Sort helper that handles ungrouped recordings."""
+    return tuple("" if value is None else value for value in stream_key)
+
+
+def build_merge_groups(recordings, merge_gap, grouping):
+    """Groups adjacent recordings by camera and time continuity."""
+    groups = []
+
+    for stream in sorted(
+        {merge_stream_key(r, grouping) for r in recordings},
+        key=sort_stream_key,
+    ):
+        camera_recordings = sorted(
+            [r for r in recordings
+             if merge_stream_key(r, grouping) == stream],
+            key=lambda r: r.datetime,
+        )
+        current_group = []
+
+        for recording in camera_recordings:
+            if not current_group:
+                current_group = [recording]
+                continue
+
+            if should_merge_after(
+                current_group[-1], recording, merge_gap,
+            ):
+                current_group.append(recording)
+            else:
+                if len(current_group) > 1:
+                    groups.append(current_group)
+                current_group = [recording]
+
+        if len(current_group) > 1:
+            groups.append(current_group)
+
+    return groups
+
+
+def concat_file_line(filepath):
+    """Formats one ffmpeg concat demuxer file line."""
+    escaped = os.path.abspath(filepath).replace("'", "'\\''")
+    return f"file '{escaped}'\n"
+
+
+def merged_output_filename(group):
+    """Builds a filename for a merged recording group."""
+    start = group[0].datetime.strftime("%Y_%m%d_%H%M%S")
+    end = group[-1].datetime.strftime("%Y%m%d_%H%M%S")
+    tag = re.sub(r"[^A-Z0-9_-]", "", group[0].tag) or "CAM"
+    return f"{start}_{tag}_to_{end}.MP4"
+
+
+def remove_recording_and_sidecars(filepath):
+    """Removes a source MP4 and sidecars with the same base name."""
+    base = os.path.splitext(filepath)[0]
+    for sidecar_path in glob.glob(f"{base}.*"):
+        try:
+            os.remove(sidecar_path)
+            logger.info(f"Removed source: {sidecar_path}")
+        except OSError as e:
+            logger.warning(f"Could not remove {sidecar_path}: {e}")
+
+
+def merge_recording_group(group, merged_destination,
+                          grouping, delete_sources):
+    """Merges one chunk group with ffmpeg concat copy."""
+    group_name = get_group_name(group[0].datetime, grouping)
+    output_dir = (
+        os.path.join(merged_destination, group_name)
+        if group_name else merged_destination
+    )
+    ensure_destination(output_dir)
+
+    output_path = os.path.join(
+        output_dir, merged_output_filename(group)
+    )
+    if os.path.exists(output_path):
+        logger.info(f"Merged file already exists: {output_path}")
+        return False
+
+    if dry_run:
+        logger.info(
+            f"[DRY RUN] Would merge {len(group)} chunks into "
+            f"{output_path}"
+        )
+        return True
+
+    list_fd, list_path = tempfile.mkstemp(
+        dir=output_dir, prefix=".concat-", suffix=".txt"
+    )
+    tmp_fd, tmp_output = tempfile.mkstemp(
+        dir=output_dir,
+        prefix=f".{os.path.basename(output_path)}.",
+        suffix=".MP4",
+    )
+    os.close(list_fd)
+    os.close(tmp_fd)
+
+    try:
+        with open(list_path, "w") as list_file:
+            for recording in group:
+                list_file.write(concat_file_line(recording.filepath))
+
+        result = subprocess.run(
+            [
+                "ffmpeg", "-hide_banner", "-loglevel", "error",
+                "-y", "-f", "concat", "-safe", "0",
+                "-i", list_path, "-c", "copy", tmp_output,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            logger.error(
+                f"Failed to merge into {output_path}: "
+                f"{result.stderr.strip()}"
+            )
+            return False
+
+        if not verify_local_file(tmp_output):
+            logger.error(f"Merged file is empty: {tmp_output}")
+            return False
+
+        os.replace(tmp_output, output_path)
+        logger.info(
+            f"Merged {len(group)} chunks into {output_path}"
+        )
+
+        if delete_sources:
+            for recording in group:
+                remove_recording_and_sidecars(recording.filepath)
+
+        return True
+    finally:
+        for path in (list_path, tmp_output):
+            if os.path.exists(path):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+
+
+def merge_chunks(source, grouping, merged_destination,
+                 merge_gap, delete_sources):
+    """Finds and merges sequential local chunks under source."""
+    if shutil.which("ffmpeg") is None:
+        raise RuntimeError("ffmpeg is required for --merge-chunks")
+    if shutil.which("ffprobe") is None:
+        raise RuntimeError("ffprobe is required for --merge-chunks")
+
+    merged_destination = (
+        merged_destination or os.path.join(source, "merged")
+    )
+    logger.info(
+        f"Scanning {source} for chunks to merge into "
+        f"{merged_destination}"
+    )
+
+    all_recordings = sorted(
+        iter_local_recordings(
+            source, excluded_roots=[merged_destination]
+        ),
+        key=lambda r: (r.mode, r.camera, r.datetime),
+    )
+    skipped_parking = sum(
+        1 for recording in all_recordings
+        if recording.mode == "parking"
+    )
+    if skipped_parking:
+        logger.info(
+            f"Skipping {skipped_parking} parking recordings "
+            f"during merge"
+        )
+    recordings = [
+        recording for recording in all_recordings
+        if recording.mode != "parking"
+    ]
+    recordings = with_durations(recordings)
+    groups = build_merge_groups(recordings, merge_gap, grouping)
+    logger.info(f"Found {len(groups)} merge groups")
+
+    merged = 0
+    for group in groups:
+        if merge_recording_group(
+            group, merged_destination, grouping, delete_sources
+        ):
+            merged += 1
+
+    logger.info(f"Chunk merge complete: {merged} groups processed")
+    return True
+
+
 def _handle_camera_deletion(address, recording, dest_path):
     """Post-download deletion: verify local file then delete from camera."""
     is_locked = (
-        (recording.filepath and "/RO/" in recording.filepath)
+        (recording.filepath and local_file_is_locked(
+            recording.filepath
+        ))
         or recording.attr == 33
     )
     if is_locked:
@@ -654,6 +1149,7 @@ def sync(address, destination, grouping, download_priority,
          recording_filter, args):
     """Synchronizes dashcam recordings with destination dir."""
     logger.info(f"Starting sync for {address}")
+    ensure_destination(destination)
     prepare_destination(destination, grouping)
 
     base_url = f"http://{address}"
@@ -692,19 +1188,25 @@ def sync(address, destination, grouping, download_priority,
         logger.info(
             f"[{i}/{total}] Processing {recording.filename}"
         )
-        downloaded, _ = download_file(
+        downloaded, _, local_available, verified = download_file(
             base_url, recording, destination, group_name
         )
-        if downloaded:
-            dest_path = get_filepath(
-                destination, group_name, recording.filename
-            )
-            if args.gps_extract:
+        dest_path = get_filepath(
+            destination, group_name, recording.filename
+        )
+        if downloaded and local_available:
+            if args.gps_extract and not dry_run:
                 extract_gps_data(dest_path)
-            if delete_after_sync:
-                _handle_camera_deletion(
-                    address, recording, dest_path
-                )
+        if delete_after_sync and (verified or dry_run):
+            _handle_camera_deletion(
+                address, recording, dest_path
+            )
+        elif delete_after_sync and local_available:
+            logger.warning(
+                f"Skipping camera deletion for "
+                f"{recording.filename}: local file size could "
+                f"not be verified"
+            )
 
     logger.info("Sync complete")
     return True
@@ -1007,10 +1509,12 @@ def parse_args():
     """Parses the command-line arguments."""
     parser = argparse.ArgumentParser(
         description="Synchronizes Viofo dashcam recordings "
-        "with a local directory and extracts GPS data.",
+        "with a local directory, imports mounted media, "
+        "and extracts GPS data.",
     )
     parser.add_argument(
-        "address", help="Dashcam IP address or hostname",
+        "address", nargs="?",
+        help="Dashcam IP address or hostname",
     )
     parser.add_argument(
         "-d", "--destination", default=os.getcwd(),
@@ -1079,6 +1583,35 @@ def parse_args():
         "--delete-after-sync", action="store_true",
         help="Delete files from camera after successful download "
         "(skips locked/RO files)",
+    )
+    parser.add_argument(
+        "--import-source",
+        help="Import and organize recordings from a local mounted "
+        "drive or directory instead of syncing over Wi-Fi",
+    )
+    parser.add_argument(
+        "--move-imported", action="store_true",
+        help="Move local import files into the destination instead "
+        "of copying them",
+    )
+    parser.add_argument(
+        "--merge-chunks", action="store_true",
+        help="Merge sequential chunks by camera using ffmpeg",
+    )
+    parser.add_argument(
+        "--merge-gap", default=DEFAULT_MERGE_GAP_SECONDS,
+        metavar="SECONDS", type=non_negative_float,
+        help="Maximum gap between chunks to merge",
+    )
+    parser.add_argument(
+        "--merged-destination",
+        help="Directory for merged files; defaults to "
+        "<destination>/merged",
+    )
+    parser.add_argument(
+        "--delete-merged-sources", action="store_true",
+        help="Delete source chunks and sidecars after a successful "
+        "merge",
     )
     parser.add_argument(
         "--html", action="store_true",
@@ -1160,12 +1693,33 @@ def run():
         logger.info(f"Recording cutoff date: {cutoff_date}")
 
     try:
-        success = sync(
-            args.address, args.destination, args.grouping,
-            args.priority, args.filter, args,
-        )
+        if args.import_source:
+            success = organize_local_recordings(
+                args.import_source, args.destination,
+                args.grouping, args.move_imported,
+                args.gps_extract,
+            )
+        elif args.address:
+            success = sync(
+                args.address, args.destination, args.grouping,
+                args.priority, args.filter, args,
+            )
+        elif args.merge_chunks:
+            success = True
+        else:
+            raise RuntimeError(
+                "address is required unless --import-source or "
+                "--merge-chunks is set"
+            )
+
+        if success and args.merge_chunks:
+            success = merge_chunks(
+                args.destination, args.grouping,
+                args.merged_destination, args.merge_gap,
+                args.delete_merged_sources,
+            )
     except Exception:
-        logger.exception("An error occurred during sync")
+        logger.exception("An error occurred")
         return 1
 
     if success:

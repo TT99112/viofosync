@@ -1,7 +1,7 @@
 FROM alpine:3.20.3
 LABEL maintainer="Rob Smith https://github.com/RobXYZ"
 
-RUN apk add --no-cache bash python3 shadow tzdata \
+RUN apk add --no-cache bash ffmpeg python3 shadow tzdata \
     && useradd -UMr dashcam
 
 COPY COPYING /
@@ -25,7 +25,14 @@ ENV ADDRESS="" \
     RUN_ONCE="" \
     READ_ONLY="" \
     GPS_EXTRACT="" \
-    HTML=""
+    HTML="" \
+    DELETE_AFTER_SYNC="" \
+    IMPORT_SOURCE="" \
+    MOVE_IMPORTED="" \
+    MERGE_CHUNKS="" \
+    MERGE_GAP="" \
+    MERGED_DESTINATION="" \
+    DELETE_MERGED_SOURCES=""
 
 COPY --chown=dashcam viofosync.sh /viofosync.sh
 COPY --chown=dashcam viofosync.py /viofosync.py
