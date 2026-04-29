@@ -836,6 +836,18 @@ def organize_local_recordings(source, destination, grouping,
     return True
 
 
+def local_import_has_recordings(source):
+    """Returns whether a local source currently has Viofo recordings."""
+    try:
+        next(iter_local_recordings(source))
+    except StopIteration:
+        return False
+    except RuntimeError as e:
+        logger.warning(f"Cannot scan import source {source}: {e}")
+        return False
+    return True
+
+
 def get_video_duration(filepath):
     """Returns video duration in seconds using ffprobe."""
     try:
@@ -1718,11 +1730,27 @@ def run():
 
     try:
         if args.import_source:
-            success = organize_local_recordings(
-                args.import_source, args.destination,
-                args.grouping, args.move_imported,
-                args.gps_extract,
-            )
+            if local_import_has_recordings(args.import_source):
+                success = organize_local_recordings(
+                    args.import_source, args.destination,
+                    args.grouping, args.move_imported,
+                    args.gps_extract,
+                )
+            elif args.address:
+                logger.info(
+                    "Import source has no Viofo recordings; "
+                    "falling back to dashcam sync"
+                )
+                success = sync(
+                    args.address, args.destination, args.grouping,
+                    args.priority, args.filter, args,
+                )
+            else:
+                success = organize_local_recordings(
+                    args.import_source, args.destination,
+                    args.grouping, args.move_imported,
+                    args.gps_extract,
+                )
         elif args.address:
             success = sync(
                 args.address, args.destination, args.grouping,

@@ -21,7 +21,7 @@ services:
     volumes:
       - /dashcam-recordings:/recordings:rw
     environment:
-      ADDRESS: 192.168.1.230
+      ADDRESS: dashcam.local
       TZ: Europe/London
       GROUPING: daily
       KEEP: 2w
@@ -47,7 +47,7 @@ Set `ADDRESS` to the dashcam IP or hostname:
 
 ```yaml
 environment:
-  ADDRESS: 192.168.1.230
+  ADDRESS: dashcam.local
   GROUPING: daily
 ```
 
@@ -78,6 +78,8 @@ services:
 ```
 
 Files are copied into `/recordings` by default. Set `MOVE_IMPORTED=1` if you want files removed from the import source after the destination copy is verified.
+
+If both `IMPORT_SOURCE` and `ADDRESS` are set, each run checks the import source first. When Viofo files are found it imports them; when the import source is empty or unavailable it falls back to normal Wi-Fi sync.
 
 Direct CLI usage:
 
