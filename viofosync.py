@@ -26,7 +26,7 @@
 # FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 # OTHER DEALINGS IN THE SOFTWARE.
 
-__version__ = "1.4"
+__version__ = "1.4.1"
 
 import argparse
 import datetime
@@ -195,6 +195,17 @@ def is_video_file(filename):
     return os.path.splitext(filename)[1].lower() == ".mp4"
 
 
+def html_href_to_camera_path(dir_path, href):
+    """Builds a camera file path from an HTML listing href."""
+    filepath = urllib.parse.unquote(href).split("?", 1)[0]
+    filepath = filepath.replace("\\", "/")
+    if re.match(r"^[A-Z]:", filepath, re.IGNORECASE):
+        return filepath
+    if filepath.startswith("/"):
+        return f"A:{filepath}"
+    return f"A:{dir_path.rstrip('/')}/{filepath}"
+
+
 def get_dashcam_filenames(base_url):
     """Gets the recording filenames from the Viofo dashcam."""
     try:
@@ -311,7 +322,9 @@ def get_dashcam_filenames_html(base_url):
             ) from e
 
         for m in html_file_re.finditer(html):
-            filepath = m.group("filepath")
+            filepath = html_href_to_camera_path(
+                dir_path, m.group("filepath")
+            )
             filename = m.group("filename")
             size = parse_html_size(
                 m.group("size"), m.group("unit").upper()
@@ -536,21 +549,88 @@ def verify_local_file(local_path, expected_size=None):
         return False
 
 
+def deletion_path_candidates(filepath):
+    """Returns possible path formats for Viofo delete commands."""
+    if not filepath:
+        return []
+
+    normalized = filepath.replace("\\", "/")
+    candidates = []
+
+    def add(path):
+        if path and path not in candidates:
+            candidates.append(path)
+
+    add(filepath)
+    add(normalized)
+
+    if re.match(r"^[A-Z]:/", normalized, re.IGNORECASE):
+        add(normalized.replace("/", "\\"))
+        return candidates
+
+    if normalized.startswith("/"):
+        for drive in ("A", "B"):
+            with_drive = f"{drive}:{normalized}"
+            add(with_drive)
+            add(with_drive.replace("/", "\\"))
+        return candidates
+
+    if "/" not in normalized:
+        for root in ("/DCIM/Movie", "/DCIM/Movie/Parking",
+                     "/DCIM/Photo"):
+            for drive in ("A", "B"):
+                with_drive = f"{drive}:{root}/{normalized}"
+                add(with_drive)
+                add(with_drive.replace("/", "\\"))
+
+    return candidates
+
+
+def delete_url_candidates(address, filepath):
+    """Builds delete request URLs with path/encoding variants."""
+    urls = []
+
+    def add(path, safe):
+        encoded = urllib.parse.quote(path, safe=safe)
+        url = f"http://{address}/?custom=1&cmd=4003&str={encoded}"
+        if url not in urls:
+            urls.append(url)
+
+    for path in deletion_path_candidates(filepath):
+        add(path, "/")
+        add(path, "/:\\")
+
+    return urls
+
+
 def delete_from_camera(address, filepath, timeout):
     """Requests deletion of filepath on the camera via the XML API.
 
     Returns True when the camera responds HTTP 200 with Status 0,
     raises on connection/parse errors.
     """
-    encoded = urllib.parse.quote(filepath, safe="/")
-    url = f"http://{address}/?custom=1&cmd=4003&str={encoded}"
-    with urllib.request.urlopen(url, timeout=timeout) as resp:
-        if resp.getcode() != 200:
-            return False
-        xml_data = resp.read().decode("utf-8")
-    root = ET.fromstring(xml_data)
-    status_elem = root.find(".//Status")
-    return status_elem is not None and status_elem.text.strip() == "0"
+    last_error = None
+    had_response = False
+    for url in delete_url_candidates(address, filepath):
+        try:
+            with urllib.request.urlopen(url, timeout=timeout) as resp:
+                if resp.getcode() != 200:
+                    continue
+                xml_data = resp.read().decode("utf-8")
+            root = ET.fromstring(xml_data)
+            had_response = True
+        except Exception as e:
+            last_error = e
+            logger.debug(f"Delete request variant failed: {e}")
+            continue
+        status_elem = root.find(".//Status")
+        if (status_elem is not None
+                and status_elem.text.strip() == "0"):
+            return True
+
+    if last_error and not had_response:
+        raise last_error
+    return False
 
 
 def get_downloaded_recordings(destination, grouping):
@@ -1748,7 +1828,7 @@ def run():
                 )
             elif args.address:
                 logger.info(
-                    "Import source has no Viofo recordings; "
+                    "Import source has no Viofo media files; "
                     "falling back to dashcam sync"
                 )
                 success = sync(

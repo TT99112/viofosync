@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## 1.4.1 (2026-04-30)
+
+* Try Viofo delete-after-sync requests with multiple camera path formats so HTML-mode paths can be deleted on more camera firmwares.
+
 ## 1.4 (2026-04-29)
 
 * Add Viofo photo (`.jpg` / `.jpeg`) sync and local import support, including the `/DCIM/Photo` HTML directory.
