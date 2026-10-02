@@ -26,7 +26,7 @@
 # FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 # OTHER DEALINGS IN THE SOFTWARE.
 
-__version__ = "1.5"
+__version__ = "1.5.1"
 
 import argparse
 import datetime
@@ -2247,13 +2247,16 @@ def run():
                 "--merge-chunks or --stack-cameras is set"
             )
 
-        if success and args.stack_cameras:
+        # Stack whatever is already on disk even when the dashcam
+        # is out of Wi-Fi range and the sync step failed.
+        if args.stack_cameras:
+            sync_ok = success
             success = stack_cameras(
                 args.destination, args.grouping,
                 args.stack_encoder, args.stack_bitrate,
                 args.stack_originals, args.stack_limit,
                 args.stack_min_age, args.stack_photos,
-            )
+            ) and sync_ok
 
         if success and args.merge_chunks:
             success = merge_chunks(

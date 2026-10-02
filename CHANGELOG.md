@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## 1.5.1 (2026-10-02)
+
+* Run camera stacking even when the dashcam is unreachable and Wi-Fi sync fails.
+
 ## 1.5 (2026-10-02)
 
 * Add camera stacking via `STACK_CAMERAS` / `--stack-cameras`: combine separate front/interior/rear (`F`/`I`/`R`) recordings into one 3840x3240 video matching the camera's stacked layout.
