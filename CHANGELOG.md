@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 1.6 (2026-10-02)
+
+* Several machines can stack the same library at once: each group is claimed with a `.stacklock` file, and `STACK_ORDER` / `--stack-order oldest` lets a second worker start from the other end.
+* Add NVIDIA (`nvenc`), Intel QSV (`qsv`), AMD (`amf`) and Apple (`videotoolbox`) encoders, picked automatically when VAAPI is not available.
+* `STACK_WORKDIR` / `--stack-workdir` copies inputs to a local folder before encoding, for workers reading the NAS over the network.
+
 ## 1.5.4 (2026-10-02)
 
 * VAAPI stacking uses constant QP (`STACK_QP`, default 26, ~50 Mbps); the Intel low-power encoder ignores bitrate targets at 3840x3240.

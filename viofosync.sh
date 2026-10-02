@@ -128,6 +128,14 @@ if [[ -n ${STACK_MIN_AGE:-} ]]; then
     args+=(--stack-min-age "$STACK_MIN_AGE")
 fi
 
+if [[ -n ${STACK_ORDER:-} ]]; then
+    args+=(--stack-order "$STACK_ORDER")
+fi
+
+if [[ -n ${STACK_WORKDIR:-} ]]; then
+    args+=(--stack-workdir "$STACK_WORKDIR")
+fi
+
 if env_enabled "${STACK_PHOTOS:-}"; then
     args+=(--stack-photos)
 fi

@@ -26,7 +26,7 @@
 # FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 # OTHER DEALINGS IN THE SOFTWARE.
 
-__version__ = "1.5.4"
+__version__ = "1.6"
 
 import argparse
 import datetime
@@ -1355,6 +1355,39 @@ def vaapi_available():
     )
 
 
+_ffmpeg_encoders = None
+
+
+def ffmpeg_has_encoder(name):
+    """True when the local ffmpeg build lists the given encoder."""
+    global _ffmpeg_encoders
+    if _ffmpeg_encoders is None:
+        try:
+            out = subprocess.run(
+                ["ffmpeg", "-hide_banner", "-encoders"],
+                capture_output=True, text=True, check=False,
+            ).stdout
+        except OSError:
+            out = ""
+        _ffmpeg_encoders = set(re.findall(r"^ \S+ (\S+)", out, re.M))
+    return name in _ffmpeg_encoders
+
+
+# Other hardware encoders, used on a desktop/laptop worker. Each takes
+# the CPU-stacked nv12 frames. Tried in this order with auto.
+HW_ENCODERS = [
+    ("nvenc", "h264_nvenc",
+     lambda b: ["-preset", "p5", "-rc", "vbr", "-b:v", b,
+                "-maxrate", b]),
+    ("qsv", "h264_qsv",
+     lambda b: ["-low_power", "1", "-b:v", b, "-maxrate", b]),
+    ("amf", "h264_amf",
+     lambda b: ["-rc", "vbr_peak", "-b:v", b, "-maxrate", b]),
+    ("videotoolbox", "h264_videotoolbox",
+     lambda b: ["-b:v", b]),
+]
+
+
 def stack_commands(inputs, output, is_photo, encoder, bitrate):
     """Yields (label, argv) ffmpeg attempts in order of preference."""
     base = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
@@ -1409,6 +1442,19 @@ def stack_commands(inputs, output, is_photo, encoder, bitrate):
                  "-low_power", "1"] + vaapi_rate
         yield "vaapi-upload", argv + audio_meta
 
+    if not use_vaapi:
+        for label, codec, opts in HW_ENCODERS:
+            if encoder not in ("auto", label):
+                continue
+            if encoder == "auto" and not ffmpeg_has_encoder(codec):
+                continue
+            argv = list(base)
+            for path in inputs:
+                argv += ["-i", path]
+            argv += ["-filter_complex", STACK_FILTER_CPU,
+                     "-map", "[v]", "-c:v", codec] + opts(bitrate)
+            yield label, argv + audio_meta
+
     if encoder in ("auto", "x264"):
         argv = list(base)
         for path in inputs:
@@ -1419,8 +1465,35 @@ def stack_commands(inputs, output, is_photo, encoder, bitrate):
         yield "x264", argv + audio_meta
 
 
+STACK_LOCK_STALE_SECONDS = 6 * 3600
+
+
+def acquire_stack_lock(front_path):
+    """Claims a group so two workers never stack the same clip."""
+    lock_path = os.path.join(
+        os.path.dirname(front_path),
+        f".{os.path.basename(front_path)}.stacklock",
+    )
+    try:
+        if time.time() - os.path.getmtime(lock_path) > \
+                STACK_LOCK_STALE_SECONDS:
+            os.remove(lock_path)
+    except OSError:
+        pass
+    try:
+        fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        return None
+    except OSError as e:
+        logger.warning(f"Cannot create lock {lock_path}: {e}")
+        return None
+    with os.fdopen(fd, "w") as fh:
+        fh.write(f"{socket.gethostname()} {os.getpid()}\n")
+    return lock_path
+
+
 def stack_recording_group(group, destination, grouping, encoder,
-                          bitrate, originals, min_age):
+                          bitrate, originals, min_age, workdir=None):
     """Builds one stacked file from an F/I/R group.
 
     The stacked file takes the front file's name so it sits where
@@ -1464,6 +1537,32 @@ def stack_recording_group(group, destination, grouping, encoder,
         )
         return True
 
+    lock_path = acquire_stack_lock(front.filepath)
+    if lock_path is None:
+        logger.debug(f"Another worker has {front.filename}; skipping")
+        return False
+    try:
+        return _stack_locked(group, destination, grouping, encoder,
+                             bitrate, originals, workdir, paths, names,
+                             is_photo, output_dir, output_path)
+    finally:
+        try:
+            os.remove(lock_path)
+        except OSError:
+            pass
+
+
+def _stack_locked(group, destination, grouping, encoder, bitrate,
+                  originals, workdir, paths, names, is_photo,
+                  output_dir, output_path):
+    """Stacks one group while holding its lock."""
+    front = group["F"]
+    # Another worker may have finished it just before we got the lock.
+    if not all(os.path.exists(p) for p in paths):
+        return False
+    if names[0] in load_stacked_names(destination):
+        return False
+
     tmp_fd, tmp_output = tempfile.mkstemp(
         dir=output_dir, prefix=f".{front.filename}.",
         suffix=os.path.splitext(front.filename)[1],
@@ -1473,15 +1572,28 @@ def stack_recording_group(group, destination, grouping, encoder,
     try:
         ok = False
         started = time.time()
+        enc_inputs, enc_output, local_dir = paths, tmp_output, None
+        if workdir:
+            # Copy the three files locally first: one sequential read
+            # each is far faster over SMB than three interleaved reads.
+            os.makedirs(workdir, exist_ok=True)
+            local_dir = tempfile.mkdtemp(dir=workdir, prefix="stack-")
+            enc_inputs = []
+            for path in paths:
+                local = os.path.join(local_dir, os.path.basename(path))
+                shutil.copyfile(path, local)
+                enc_inputs.append(local)
+            enc_output = os.path.join(
+                local_dir, "out" + os.path.splitext(front.filename)[1])
         for label, argv in stack_commands(
-            paths, tmp_output, is_photo, encoder, bitrate
+            enc_inputs, enc_output, is_photo, encoder, bitrate
         ):
             logger.info(f"Stacking {front.filename} ({label})")
             result = subprocess.run(
                 argv, capture_output=True, text=True, check=False
             )
             if result.returncode == 0 and verify_local_file(
-                tmp_output
+                enc_output
             ):
                 ok = True
                 break
@@ -1492,6 +1604,8 @@ def stack_recording_group(group, destination, grouping, encoder,
         if not ok:
             logger.error(f"Could not stack {front.filename}")
             return False
+        if local_dir:
+            shutil.copyfile(enc_output, tmp_output)
 
         if not is_photo:
             out_info = probe_video(tmp_output)
@@ -1533,10 +1647,13 @@ def stack_recording_group(group, destination, grouping, encoder,
                 os.remove(tmp_output)
             except OSError:
                 pass
+        if workdir and "local_dir" in locals() and local_dir:
+            shutil.rmtree(local_dir, ignore_errors=True)
 
 
 def stack_cameras(destination, grouping, encoder, bitrate,
-                  originals, limit, min_age, include_photos):
+                  originals, limit, min_age, include_photos,
+                  order="newest", workdir=None):
     """Finds separate F/I/R recordings and stacks them."""
     if shutil.which("ffmpeg") is None:
         raise RuntimeError("ffmpeg is required for --stack-cameras")
@@ -1550,8 +1667,10 @@ def stack_cameras(destination, grouping, encoder, bitrate,
         if include_photos or is_video_file(r.filename)
     ]
     groups = build_stack_groups(recordings)
-    # Newest first so fresh footage is ready soonest.
-    groups.sort(key=lambda g: g["F"].datetime, reverse=True)
+    # Newest first by default so fresh footage is ready soonest; a
+    # second worker can use oldest so the two meet in the middle.
+    groups.sort(key=lambda g: g["F"].datetime,
+                reverse=(order != "oldest"))
     logger.info(f"Found {len(groups)} F/I/R groups to stack")
     if encoder in ("auto", "vaapi"):
         logger.info(
@@ -1567,7 +1686,7 @@ def stack_cameras(destination, grouping, encoder, bitrate,
             break
         if stack_recording_group(
             group, destination, grouping, encoder, bitrate,
-            originals, min_age,
+            originals, min_age, workdir,
         ):
             stacked += 1
 
@@ -2111,9 +2230,11 @@ def parse_args():
     )
     parser.add_argument(
         "--stack-encoder", default="auto",
-        choices=["auto", "vaapi", "x264"],
-        help="auto uses the Intel iGPU (VAAPI) when /dev/dri is "
-        "available and falls back to CPU x264",
+        choices=["auto", "vaapi", "nvenc", "qsv", "amf",
+                 "videotoolbox", "x264"],
+        help="auto uses VAAPI when /dev/dri is available, otherwise "
+        "any NVIDIA/Intel/AMD/Apple hardware encoder ffmpeg has, "
+        "then CPU x264",
     )
     parser.add_argument(
         "--stack-bitrate", default=DEFAULT_STACK_BITRATE,
@@ -2133,6 +2254,16 @@ def parse_args():
         "--stack-min-age", default=DEFAULT_STACK_MIN_AGE_SECONDS,
         type=int, metavar="SECONDS",
         help="Skip files modified less than this many seconds ago",
+    )
+    parser.add_argument(
+        "--stack-order", default="newest",
+        choices=["newest", "oldest"],
+        help="Which end of the backlog to start from",
+    )
+    parser.add_argument(
+        "--stack-workdir",
+        help="Local scratch folder; inputs are copied here before "
+        "encoding (use on a PC that reads the NAS over the network)",
     )
     parser.add_argument(
         "--stack-photos", action="store_true",
@@ -2263,6 +2394,7 @@ def run():
                 args.stack_encoder, args.stack_bitrate,
                 args.stack_originals, args.stack_limit,
                 args.stack_min_age, args.stack_photos,
+                args.stack_order, args.stack_workdir,
             ) and sync_ok
 
         if success and args.merge_chunks:
