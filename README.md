@@ -146,6 +146,44 @@ environment:
   DELETE_MERGED_SOURCES: 0
 ```
 
+## Optional Camera Stacking
+
+3-channel cameras (A329S etc.) can record front, interior and rear as separate
+`F` / `I` / `R` files. Stacking combines each set into one video laid out like
+the camera's own stacked mode: front on top at 4K, interior bottom-left and rear
+bottom-right at 1080p (3840x3240). Audio comes from the front file.
+
+```yaml
+services:
+  viofosync:
+    image: tt99112/viofosync:latest
+    devices:
+      - /dev/dri:/dev/dri   # Intel iGPU for hardware encoding
+    environment:
+      STACK_CAMERAS: 1
+      STACK_LIMIT: 1        # try one first, then set to 0
+```
+
+Behaviour:
+
+- `F`/`I`/`R` sets are matched by timestamp and consecutive sequence numbers
+  (`002556F`, `002557I`, `002558R`); parking `PF`/`PI`/`PR` sets too
+- the stacked file takes the front file's name, in the same date folder
+- originals move to `<destination>/_separate/<date>/` (`STACK_ORIGINALS=keep`)
+  or are deleted (`STACK_ORIGINALS=delete`); `KEEP` also prunes `_separate`
+- stacked names are recorded in `<destination>/.viofosync-stacked` so Wi-Fi sync
+  and local import do not fetch the originals again
+- output is checked for size (3840x3240) and duration before anything is moved
+- newest recordings are stacked first; `STACK_LIMIT` caps how many per run
+
+Encoding uses VAAPI on the Intel iGPU when `/dev/dri` is passed through and
+falls back to CPU `libx264`, which is far too slow on a NAS CPU for 4K. Check
+the GPU is visible with:
+
+```bash
+docker exec viofosync vainfo
+```
+
 ## Configuration
 
 | Variable | Default | Description |
@@ -167,6 +205,13 @@ environment:
 | `MERGE_GAP` | `2` | Allowed seconds between consecutive normal chunks |
 | `MERGED_DESTINATION` | `/recordings/merged` | Optional merged-file output folder |
 | `DELETE_MERGED_SOURCES` | `0` | Set to `1` to delete source chunks after a merge |
+| `STACK_CAMERAS` | `0` | Set to `1` to stack separate F/I/R files into one video |
+| `STACK_ENCODER` | `auto` | `auto` (VAAPI if available, else CPU), `vaapi`, or `x264` |
+| `STACK_BITRATE` | `45M` | Video bitrate for stacked files |
+| `STACK_ORIGINALS` | `keep` | `keep` moves originals to `_separate/`, `delete` removes them |
+| `STACK_LIMIT` | `0` | Maximum groups stacked per run; `0` means no limit |
+| `STACK_MIN_AGE` | `300` | Skip files modified in the last N seconds |
+| `STACK_PHOTOS` | `0` | Set to `1` to also stack F/I/R photo snapshots |
 | `MAX_USED_DISK` | `90` | Stop downloading when destination disk usage reaches this percent |
 | `TIMEOUT` | `10` | Dashcam connection timeout in seconds |
 | `DOWNLOAD_ATTEMPTS` | `1` | Retry attempts per file |

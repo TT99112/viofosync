@@ -104,4 +104,32 @@ if env_enabled "${DELETE_MERGED_SOURCES:-}"; then
     args+=(--delete-merged-sources)
 fi
 
+if env_enabled "${STACK_CAMERAS:-}"; then
+    args+=(--stack-cameras)
+fi
+
+if [[ -n ${STACK_ENCODER:-} ]]; then
+    args+=(--stack-encoder "$STACK_ENCODER")
+fi
+
+if [[ -n ${STACK_BITRATE:-} ]]; then
+    args+=(--stack-bitrate "$STACK_BITRATE")
+fi
+
+if [[ -n ${STACK_ORIGINALS:-} ]]; then
+    args+=(--stack-originals "$STACK_ORIGINALS")
+fi
+
+if [[ -n ${STACK_LIMIT:-} ]]; then
+    args+=(--stack-limit "$STACK_LIMIT")
+fi
+
+if [[ -n ${STACK_MIN_AGE:-} ]]; then
+    args+=(--stack-min-age "$STACK_MIN_AGE")
+fi
+
+if env_enabled "${STACK_PHOTOS:-}"; then
+    args+=(--stack-photos)
+fi
+
 exec "$python_bin" "$app_dir/viofosync.py" "${args[@]}" "$@"

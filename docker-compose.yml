@@ -7,6 +7,10 @@ services:
     # Run as your NAS user if you do not want root-owned recordings.
     # user: "1000:1000"
 
+    # Intel iGPU for STACK_CAMERAS hardware encoding.
+    # devices:
+    #   - /dev/dri:/dev/dri
+
     volumes:
       # NAS recording destination.
       - /dashcam-recordings:/recordings:rw
@@ -54,3 +58,8 @@ services:
       MERGE_GAP: 2
       MERGED_DESTINATION: ''
       DELETE_MERGED_SOURCES: 0
+
+      # Combine separate F/I/R files into one stacked video.
+      STACK_CAMERAS: 0
+      STACK_ORIGINALS: keep
+      STACK_LIMIT: 0

@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 1.5 (2026-10-02)
+
+* Add camera stacking via `STACK_CAMERAS` / `--stack-cameras`: combine separate front/interior/rear (`F`/`I`/`R`) recordings into one 3840x3240 video matching the camera's stacked layout.
+* Hardware encoding on Intel iGPUs via VAAPI (`/dev/dri`), with CPU fallback. Docker image now installs the Intel media driver on amd64.
+* Stacked originals are kept under `_separate/` or deleted, and recorded in `.viofosync-stacked` so they are not synced or imported again.
+
 ## 1.4.1 (2026-04-30)
 
 * Try Viofo delete-after-sync requests with multiple camera path formats so HTML-mode paths can be deleted on more camera firmwares.

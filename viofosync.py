@@ -26,7 +26,7 @@
 # FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 # OTHER DEALINGS IN THE SOFTWARE.
 
-__version__ = "1.4.1"
+__version__ = "1.5"
 
 import argparse
 import datetime
@@ -731,6 +731,10 @@ def prepare_destination(destination, grouping):
 
     cleanup_empty_dirs(destination, grouping)
 
+    separate_root = os.path.join(destination, STACK_SEPARATE_DIRNAME)
+    if os.path.isdir(separate_root):
+        prepare_destination(separate_root, grouping)
+
 
 def destination_is_too_full(destination):
     """Returns True when destination disk usage exceeds the limit."""
@@ -904,9 +908,21 @@ def organize_local_recordings(source, destination, grouping,
     )
     logger.info(f"Found {len(recordings)} local recordings")
 
+    stacked_names = load_stacked_names(destination)
     imported = 0
     for recording in recordings:
         if cutoff_date and recording.datetime.date() < cutoff_date:
+            continue
+        if recording.filename in stacked_names:
+            logger.info(f"Already imported and stacked: "
+                        f"{recording.filename}")
+            if move_imported and not dry_run:
+                try:
+                    os.remove(recording.filepath)
+                except OSError as e:
+                    logger.warning(
+                        f"Could not remove {recording.filepath}: {e}"
+                    )
             continue
         if destination_is_too_full(destination):
             logger.warning("Stopping local import due to disk usage")
@@ -1183,7 +1199,10 @@ def merge_chunks(source, grouping, merged_destination,
 
     all_recordings = sorted(
         iter_local_recordings(
-            source, excluded_roots=[merged_destination]
+            source, excluded_roots=[
+                merged_destination,
+                os.path.join(source, STACK_SEPARATE_DIRNAME),
+            ]
         ),
         key=lambda r: (r.mode, r.camera, r.datetime),
     )
@@ -1213,6 +1232,339 @@ def merge_chunks(source, grouping, merged_destination,
             merged += 1
 
     logger.info(f"Chunk merge complete: {merged} groups processed")
+    return True
+
+
+# --- Camera stacking (F / I / R -> one 3-up video) ---
+
+STACK_CAMERAS = ("F", "I", "R")
+STACK_LEDGER_NAME = ".viofosync-stacked"
+STACK_SEPARATE_DIRNAME = "_separate"
+DEFAULT_STACK_MIN_AGE_SECONDS = 300
+DEFAULT_STACK_BITRATE = "45M"
+VAAPI_DEVICE = os.environ.get("VAAPI_DEVICE", "/dev/dri/renderD128")
+
+# Front on top at native size, interior bottom-left and rear
+# bottom-right scaled to half the front width. Matches the layout
+# the camera writes itself when it records in stacked mode.
+STACK_FILTER_CPU = (
+    "[0:v]scale=w=3840:h=2160,setsar=1[f];"
+    "[1:v]scale=w=1920:h=1080,setsar=1[i];"
+    "[2:v]scale=w=1920:h=1080,setsar=1[r];"
+    "[i][r]hstack=inputs=2[b];"
+    "[f][b]vstack=inputs=2,format=nv12[v]"
+)
+STACK_FILTER_VAAPI = (
+    "[0:v]scale_vaapi=w=3840:h=2160:format=nv12[f];"
+    "[1:v]scale_vaapi=w=1920:h=1080:format=nv12[i];"
+    "[2:v]scale_vaapi=w=1920:h=1080:format=nv12[r];"
+    "[i][r]hstack_vaapi=inputs=2[b];"
+    "[f][b]vstack_vaapi=inputs=2[v]"
+)
+
+
+def stack_ledger_path(destination):
+    """Path of the file listing originals already stacked."""
+    return os.path.join(destination, STACK_LEDGER_NAME)
+
+
+def load_stacked_names(destination):
+    """Returns the set of original filenames that were stacked.
+
+    Sync and import consult this so stacked-away I/R/F originals
+    still on the camera are not downloaded again.
+    """
+    try:
+        with open(stack_ledger_path(destination)) as fh:
+            return {line.strip() for line in fh if line.strip()}
+    except OSError:
+        return set()
+
+
+def record_stacked_names(destination, filenames):
+    """Appends original filenames to the stacked ledger."""
+    with open(stack_ledger_path(destination), "a") as fh:
+        for filename in filenames:
+            fh.write(f"{filename}\n")
+
+
+def build_stack_groups(recordings):
+    """Groups F/I/R recordings that belong to the same moment.
+
+    Viofo writes the three cameras with the same timestamp and
+    consecutive sequence numbers, e.g. 002556F, 002557I, 002558R.
+    Returns a list of dicts camera -> LocalRecording.
+    """
+    buckets = {}
+    for recording in recordings:
+        if recording.camera not in STACK_CAMERAS:
+            continue
+        ext = os.path.splitext(recording.filename)[1].lower()
+        ts = recording.filename[:16]  # YYYY_MMDD_HHMMSS
+        key = (os.path.dirname(recording.filepath), ts,
+               recording.mode, ext)
+        buckets.setdefault(key, []).append(recording)
+
+    groups = []
+    for key in sorted(buckets):
+        by_camera = {}
+        for recording in buckets[key]:
+            by_camera.setdefault(recording.camera, []).append(recording)
+        if not all(cam in by_camera for cam in STACK_CAMERAS):
+            continue
+        # Pair each front file with I = seq+1 and R = seq+2.
+        interiors = {r.sequence: r for r in by_camera["I"]}
+        rears = {r.sequence: r for r in by_camera["R"]}
+        for front in sorted(by_camera["F"], key=lambda r: r.sequence):
+            interior = interiors.get(front.sequence + 1)
+            rear = rears.get(front.sequence + 2)
+            if interior and rear:
+                groups.append({"F": front, "I": interior, "R": rear})
+    return groups
+
+
+def probe_video(filepath):
+    """Returns (width, height, duration) of the first video stream."""
+    result = subprocess.run(
+        [
+            "ffprobe", "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "stream=width,height:format=duration",
+            "-of", "default=noprint_wrappers=1", filepath,
+        ],
+        capture_output=True, text=True, check=False,
+    )
+    if result.returncode != 0:
+        return None
+    values = {}
+    for line in result.stdout.splitlines():
+        if "=" in line:
+            k, v = line.split("=", 1)
+            values[k.strip()] = v.strip()
+    try:
+        return (int(values["width"]), int(values["height"]),
+                float(values.get("duration") or 0))
+    except (KeyError, ValueError):
+        return None
+
+
+def vaapi_available():
+    """True when a VAAPI render node is visible in the container."""
+    return os.path.exists(VAAPI_DEVICE) and os.access(
+        VAAPI_DEVICE, os.R_OK | os.W_OK
+    )
+
+
+def stack_commands(inputs, output, is_photo, encoder, bitrate):
+    """Yields (label, argv) ffmpeg attempts in order of preference."""
+    base = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
+
+    if is_photo:
+        argv = list(base)
+        for path in inputs:
+            argv += ["-i", path]
+        argv += [
+            "-filter_complex",
+            STACK_FILTER_CPU.replace(",format=nv12", ""),
+            "-map", "[v]", "-frames:v", "1", "-q:v", "2", output,
+        ]
+        yield "jpeg", argv
+        return
+
+    rate = ["-b:v", bitrate, "-maxrate", bitrate,
+            "-bufsize", bitrate]
+    audio_meta = ["-map", "0:a?", "-c:a", "copy",
+                  "-map_metadata", "0", "-movflags", "+faststart",
+                  "-f", "mp4", output]
+
+    use_vaapi = encoder in ("auto", "vaapi") and vaapi_available()
+    if encoder == "vaapi" and not use_vaapi:
+        logger.warning(
+            f"STACK_ENCODER=vaapi but {VAAPI_DEVICE} is not "
+            f"available; is /dev/dri passed to the container?"
+        )
+
+    if use_vaapi:
+        # 1. Everything on the iGPU: decode, scale, stack, encode.
+        argv = list(base) + ["-vaapi_device", VAAPI_DEVICE]
+        for path in inputs:
+            argv += ["-hwaccel", "vaapi",
+                     "-hwaccel_output_format", "vaapi", "-i", path]
+        argv += ["-filter_complex", STACK_FILTER_VAAPI,
+                 "-map", "[v]", "-c:v", "h264_vaapi"] + rate
+        yield "vaapi", argv + audio_meta
+
+        # 2. CPU decode/stack, iGPU encode (older ffmpeg / drivers).
+        argv = list(base) + ["-vaapi_device", VAAPI_DEVICE]
+        for path in inputs:
+            argv += ["-i", path]
+        argv += ["-filter_complex",
+                 STACK_FILTER_CPU.replace("[v]", ",hwupload[v]"),
+                 "-map", "[v]", "-c:v", "h264_vaapi"] + rate
+        yield "vaapi-upload", argv + audio_meta
+
+    if encoder in ("auto", "x264"):
+        argv = list(base)
+        for path in inputs:
+            argv += ["-i", path]
+        argv += ["-filter_complex", STACK_FILTER_CPU,
+                 "-map", "[v]", "-c:v", "libx264",
+                 "-preset", "veryfast", "-pix_fmt", "yuv420p"] + rate
+        yield "x264", argv + audio_meta
+
+
+def stack_recording_group(group, destination, grouping, encoder,
+                          bitrate, originals, min_age):
+    """Builds one stacked file from an F/I/R group.
+
+    The stacked file takes the front file's name so it sits where
+    the camera's own stacked recordings would.
+    """
+    front = group["F"]
+    paths = [group[cam].filepath for cam in STACK_CAMERAS]
+    names = [group[cam].filename for cam in STACK_CAMERAS]
+    is_photo = not is_video_file(front.filename)
+
+    now = time.time()
+    for path in paths:
+        try:
+            if now - os.path.getmtime(path) < min_age:
+                logger.debug(f"Skipping recent file, may be in use: "
+                             f"{path}")
+                return False
+        except OSError:
+            return False
+
+    if not is_photo:
+        front_info = probe_video(front.filepath)
+        if front_info is None:
+            logger.warning(f"Cannot read {front.filepath}; skipping")
+            return False
+        if front_info[1] > 2160:
+            logger.debug(f"Already stacked: {front.filename}")
+            return False
+
+    output_dir = os.path.dirname(front.filepath)
+    output_path = front.filepath
+
+    if destination_is_too_full(output_dir):
+        logger.warning("Skipping stacking due to disk usage")
+        return False
+
+    if dry_run:
+        logger.info(
+            f"[DRY RUN] Would stack {', '.join(names)} into "
+            f"{output_path}"
+        )
+        return True
+
+    tmp_fd, tmp_output = tempfile.mkstemp(
+        dir=output_dir, prefix=f".{front.filename}.",
+        suffix=os.path.splitext(front.filename)[1],
+    )
+    os.close(tmp_fd)
+
+    try:
+        ok = False
+        started = time.time()
+        for label, argv in stack_commands(
+            paths, tmp_output, is_photo, encoder, bitrate
+        ):
+            logger.info(f"Stacking {front.filename} ({label})")
+            result = subprocess.run(
+                argv, capture_output=True, text=True, check=False
+            )
+            if result.returncode == 0 and verify_local_file(
+                tmp_output
+            ):
+                ok = True
+                break
+            logger.warning(
+                f"{label} stacking failed for {front.filename}: "
+                f"{result.stderr.strip()[-600:]}"
+            )
+        if not ok:
+            logger.error(f"Could not stack {front.filename}")
+            return False
+
+        if not is_photo:
+            out_info = probe_video(tmp_output)
+            front_info = probe_video(front.filepath)
+            if (out_info is None or out_info[:2] != (3840, 3240)
+                    or abs(out_info[2] - front_info[2]) > 2.0):
+                logger.error(
+                    f"Stacked output failed verification for "
+                    f"{front.filename}: {out_info}"
+                )
+                return False
+
+        # Move or delete the separate originals, then put the
+        # stacked file in the front file's place.
+        if originals == "keep":
+            group_name = get_group_name(front.datetime, grouping)
+            keep_dir = os.path.join(
+                destination, STACK_SEPARATE_DIRNAME, group_name or ""
+            )
+            ensure_destination(keep_dir)
+            for path in paths:
+                shutil.move(path, os.path.join(
+                    keep_dir, os.path.basename(path)))
+        else:
+            for path in paths[1:]:
+                remove_recording_and_sidecars(path)
+
+        os.replace(tmp_output, output_path)
+        record_stacked_names(destination, names)
+        elapsed = time.time() - started
+        logger.info(
+            f"Stacked {front.filename} in {elapsed:.0f}s "
+            f"({human_size(os.path.getsize(output_path))})"
+        )
+        return True
+    finally:
+        if os.path.exists(tmp_output):
+            try:
+                os.remove(tmp_output)
+            except OSError:
+                pass
+
+
+def stack_cameras(destination, grouping, encoder, bitrate,
+                  originals, limit, min_age, include_photos):
+    """Finds separate F/I/R recordings and stacks them."""
+    if shutil.which("ffmpeg") is None:
+        raise RuntimeError("ffmpeg is required for --stack-cameras")
+
+    separate_root = os.path.join(destination, STACK_SEPARATE_DIRNAME)
+    merged_root = os.path.join(destination, "merged")
+    recordings = [
+        r for r in iter_local_recordings(
+            destination, excluded_roots=[separate_root, merged_root]
+        )
+        if include_photos or is_video_file(r.filename)
+    ]
+    groups = build_stack_groups(recordings)
+    # Newest first so fresh footage is ready soonest.
+    groups.sort(key=lambda g: g["F"].datetime, reverse=True)
+    logger.info(f"Found {len(groups)} F/I/R groups to stack")
+    if encoder in ("auto", "vaapi"):
+        logger.info(
+            "Hardware encoder: "
+            + ("VAAPI " + VAAPI_DEVICE if vaapi_available()
+               else "not available, using CPU (slow)")
+        )
+
+    stacked = 0
+    for group in groups:
+        if limit and stacked >= limit:
+            logger.info(f"Reached STACK_LIMIT of {limit}")
+            break
+        if stack_recording_group(
+            group, destination, grouping, encoder, bitrate,
+            originals, min_age,
+        ):
+            stacked += 1
+
+    logger.info(f"Camera stacking complete: {stacked} groups stacked")
     return True
 
 
@@ -1299,9 +1651,15 @@ def sync(address, destination, grouping, download_priority,
             f"Filtered to {len(dashcam_recordings)} recordings"
         )
 
+    stacked_names = load_stacked_names(destination)
     total = len(dashcam_recordings)
     for i, recording in enumerate(dashcam_recordings, start=1):
         if cutoff_date and recording.datetime.date() < cutoff_date:
+            continue
+        if recording.filename in stacked_names:
+            logger.debug(
+                f"Skipping {recording.filename}: already stacked"
+            )
             continue
         if destination_is_too_full(destination):
             logger.warning("Stopping sync due to disk usage")
@@ -1739,6 +2097,41 @@ def parse_args():
         "merge",
     )
     parser.add_argument(
+        "--stack-cameras", action="store_true",
+        help="Combine separate front/interior/rear recordings into "
+        "one stacked video (front on top, interior bottom-left, "
+        "rear bottom-right)",
+    )
+    parser.add_argument(
+        "--stack-encoder", default="auto",
+        choices=["auto", "vaapi", "x264"],
+        help="auto uses the Intel iGPU (VAAPI) when /dev/dri is "
+        "available and falls back to CPU x264",
+    )
+    parser.add_argument(
+        "--stack-bitrate", default=DEFAULT_STACK_BITRATE,
+        help="Video bitrate for stacked files, e.g. 45M",
+    )
+    parser.add_argument(
+        "--stack-originals", default="keep",
+        choices=["keep", "delete"],
+        help="keep moves the separate files to "
+        "<destination>/_separate/; delete removes them",
+    )
+    parser.add_argument(
+        "--stack-limit", default=0, type=int, metavar="N",
+        help="Stack at most N groups per run (0 = no limit)",
+    )
+    parser.add_argument(
+        "--stack-min-age", default=DEFAULT_STACK_MIN_AGE_SECONDS,
+        type=int, metavar="SECONDS",
+        help="Skip files modified less than this many seconds ago",
+    )
+    parser.add_argument(
+        "--stack-photos", action="store_true",
+        help="Also stack F/I/R photo snapshots",
+    )
+    parser.add_argument(
         "--html", action="store_true",
         help="Use fast HTML directory scraping instead of "
         "slow XML API to list recordings",
@@ -1846,12 +2239,20 @@ def run():
                 args.address, args.destination, args.grouping,
                 args.priority, args.filter, args,
             )
-        elif args.merge_chunks:
+        elif args.merge_chunks or args.stack_cameras:
             success = True
         else:
             raise RuntimeError(
-                "address is required unless --import-source or "
-                "--merge-chunks is set"
+                "address is required unless --import-source, "
+                "--merge-chunks or --stack-cameras is set"
+            )
+
+        if success and args.stack_cameras:
+            success = stack_cameras(
+                args.destination, args.grouping,
+                args.stack_encoder, args.stack_bitrate,
+                args.stack_originals, args.stack_limit,
+                args.stack_min_age, args.stack_photos,
             )
 
         if success and args.merge_chunks:
