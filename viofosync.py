@@ -26,7 +26,7 @@
 # FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 # OTHER DEALINGS IN THE SOFTWARE.
 
-__version__ = "1.5.2"
+__version__ = "1.5.3"
 
 import argparse
 import datetime
@@ -1372,6 +1372,10 @@ def stack_commands(inputs, output, is_photo, encoder, bitrate):
 
     rate = ["-b:v", bitrate, "-maxrate", bitrate,
             "-bufsize", bitrate]
+    # The iGPU silently falls back to constant-QP (~300 Mbps at this
+    # size) unless the rate-control mode is set explicitly.
+    vaapi_rate = ["-rc_mode", "VBR", "-b:v", bitrate,
+                  "-maxrate", bitrate]
     audio_meta = ["-map", "0:a?", "-c:a", "copy",
                   "-map_metadata", "0", "-movflags", "+faststart",
                   "-f", "mp4", output]
@@ -1391,7 +1395,7 @@ def stack_commands(inputs, output, is_photo, encoder, bitrate):
                      "-hwaccel_output_format", "vaapi", "-i", path]
         argv += ["-filter_complex", STACK_FILTER_VAAPI,
                  "-map", "[v]", "-c:v", "h264_vaapi",
-                 "-low_power", "1"] + rate
+                 "-low_power", "1"] + vaapi_rate
         yield "vaapi", argv + audio_meta
 
         # 2. CPU decode/stack, iGPU encode (older ffmpeg / drivers).
@@ -1401,7 +1405,7 @@ def stack_commands(inputs, output, is_photo, encoder, bitrate):
         argv += ["-filter_complex",
                  STACK_FILTER_CPU.replace("[v]", ",hwupload[v]"),
                  "-map", "[v]", "-c:v", "h264_vaapi",
-                 "-low_power", "1"] + rate
+                 "-low_power", "1"] + vaapi_rate
         yield "vaapi-upload", argv + audio_meta
 
     if encoder in ("auto", "x264"):

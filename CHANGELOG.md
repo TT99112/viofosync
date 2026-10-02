@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## 1.5.3 (2026-10-02)
+
+* Set VAAPI rate control to VBR explicitly so `STACK_BITRATE` is honoured (the driver otherwise used constant QP at ~300 Mbps).
+
 ## 1.5.2 (2026-10-02)
 
 * Use the low-power (VDENC) H.264 VAAPI encoder; Intel Gen12 iGPUs reject 3840x3240 frames on the default encoder.
