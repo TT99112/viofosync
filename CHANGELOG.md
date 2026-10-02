@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## 1.5.4 (2026-10-02)
+
+* VAAPI stacking uses constant QP (`STACK_QP`, default 26, ~50 Mbps); the Intel low-power encoder ignores bitrate targets at 3840x3240.
+
 ## 1.5.3 (2026-10-02)
 
 * Set VAAPI rate control to VBR explicitly so `STACK_BITRATE` is honoured (the driver otherwise used constant QP at ~300 Mbps).

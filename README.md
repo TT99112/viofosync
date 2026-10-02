@@ -207,7 +207,8 @@ docker exec viofosync vainfo
 | `DELETE_MERGED_SOURCES` | `0` | Set to `1` to delete source chunks after a merge |
 | `STACK_CAMERAS` | `0` | Set to `1` to stack separate F/I/R files into one video |
 | `STACK_ENCODER` | `auto` | `auto` (VAAPI if available, else CPU), `vaapi`, or `x264` |
-| `STACK_BITRATE` | `45M` | Video bitrate for stacked files |
+| `STACK_BITRATE` | `45M` | Video bitrate for CPU (x264) stacking |
+| `STACK_QP` | `26` | Quality for iGPU stacking; lower is bigger/better (26 ≈ 50 Mbps) |
 | `STACK_ORIGINALS` | `keep` | `keep` moves originals to `_separate/`, `delete` removes them |
 | `STACK_LIMIT` | `0` | Maximum groups stacked per run; `0` means no limit |
 | `STACK_MIN_AGE` | `300` | Skip files modified in the last N seconds |

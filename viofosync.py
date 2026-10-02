@@ -26,7 +26,7 @@
 # FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 # OTHER DEALINGS IN THE SOFTWARE.
 
-__version__ = "1.5.3"
+__version__ = "1.5.4"
 
 import argparse
 import datetime
@@ -1242,6 +1242,7 @@ STACK_LEDGER_NAME = ".viofosync-stacked"
 STACK_SEPARATE_DIRNAME = "_separate"
 DEFAULT_STACK_MIN_AGE_SECONDS = 300
 DEFAULT_STACK_BITRATE = "45M"
+STACK_VAAPI_QP = int(os.environ.get("STACK_QP", "26"))
 VAAPI_DEVICE = os.environ.get("VAAPI_DEVICE", "/dev/dri/renderD128")
 
 # Front on top at native size, interior bottom-left and rear
@@ -1372,10 +1373,10 @@ def stack_commands(inputs, output, is_photo, encoder, bitrate):
 
     rate = ["-b:v", bitrate, "-maxrate", bitrate,
             "-bufsize", bitrate]
-    # The iGPU silently falls back to constant-QP (~300 Mbps at this
-    # size) unless the rate-control mode is set explicitly.
-    vaapi_rate = ["-rc_mode", "VBR", "-b:v", bitrate,
-                  "-maxrate", bitrate]
+    # Intel's low-power H.264 encoder ignores bitrate targets at
+    # 3840x3240 (VBR/CBR both come out ~330 Mbps), so use constant
+    # QP. QP 26 gives ~50 Mbps, close to the camera's own stacked files.
+    vaapi_rate = ["-rc_mode", "CQP", "-qp", str(STACK_VAAPI_QP)]
     audio_meta = ["-map", "0:a?", "-c:a", "copy",
                   "-map_metadata", "0", "-movflags", "+faststart",
                   "-f", "mp4", output]
