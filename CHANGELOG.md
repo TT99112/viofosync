@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## 1.5.2 (2026-10-02)
+
+* Use the low-power (VDENC) H.264 VAAPI encoder; Intel Gen12 iGPUs reject 3840x3240 frames on the default encoder.
+
 ## 1.5.1 (2026-10-02)
 
 * Run camera stacking even when the dashcam is unreachable and Wi-Fi sync fails.

@@ -26,7 +26,7 @@
 # FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 # OTHER DEALINGS IN THE SOFTWARE.
 
-__version__ = "1.5.1"
+__version__ = "1.5.2"
 
 import argparse
 import datetime
@@ -1390,7 +1390,8 @@ def stack_commands(inputs, output, is_photo, encoder, bitrate):
             argv += ["-hwaccel", "vaapi",
                      "-hwaccel_output_format", "vaapi", "-i", path]
         argv += ["-filter_complex", STACK_FILTER_VAAPI,
-                 "-map", "[v]", "-c:v", "h264_vaapi"] + rate
+                 "-map", "[v]", "-c:v", "h264_vaapi",
+                 "-low_power", "1"] + rate
         yield "vaapi", argv + audio_meta
 
         # 2. CPU decode/stack, iGPU encode (older ffmpeg / drivers).
@@ -1399,7 +1400,8 @@ def stack_commands(inputs, output, is_photo, encoder, bitrate):
             argv += ["-i", path]
         argv += ["-filter_complex",
                  STACK_FILTER_CPU.replace("[v]", ",hwupload[v]"),
-                 "-map", "[v]", "-c:v", "h264_vaapi"] + rate
+                 "-map", "[v]", "-c:v", "h264_vaapi",
+                 "-low_power", "1"] + rate
         yield "vaapi-upload", argv + audio_meta
 
     if encoder in ("auto", "x264"):
