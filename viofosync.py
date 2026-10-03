@@ -1289,11 +1289,24 @@ def record_stacked_names(destination, filenames):
             fh.write(f"{filename}\n")
 
 
+# How far apart the F / I / R files of one moment may be. Viofo
+# normally writes them with the same timestamp and consecutive
+# sequence numbers, but not always (see build_stack_groups).
+STACK_MAX_SEQUENCE_GAP = 3
+STACK_MAX_TIME_GAP_SECONDS = 10
+
+
 def build_stack_groups(recordings):
     """Groups F/I/R recordings that belong to the same moment.
 
-    Viofo writes the three cameras with the same timestamp and
-    consecutive sequence numbers, e.g. 002556F, 002557I, 002558R.
+    Viofo usually writes the three cameras with the same timestamp and
+    consecutive sequence numbers, e.g. 002556F, 002557I, 002558R. It
+    does not always: parking clips can come out as I, F, R (000788PI,
+    000790PF, 000791PR) and snapshots can be stamped a few seconds
+    apart (114920PF, 114923PI). So each front file is matched to the
+    closest unused interior and rear file in the same folder, mode and
+    file type whose timestamp is within STACK_MAX_TIME_GAP_SECONDS and
+    whose sequence number is within STACK_MAX_SEQUENCE_GAP.
     Returns a list of dicts camera -> LocalRecording.
     """
     buckets = {}
@@ -1301,26 +1314,44 @@ def build_stack_groups(recordings):
         if recording.camera not in STACK_CAMERAS:
             continue
         ext = os.path.splitext(recording.filename)[1].lower()
-        ts = recording.filename[:16]  # YYYY_MMDD_HHMMSS
-        key = (os.path.dirname(recording.filepath), ts,
-               recording.mode, ext)
+        key = (os.path.dirname(recording.filepath), recording.mode, ext)
         buckets.setdefault(key, []).append(recording)
 
     groups = []
     for key in sorted(buckets):
-        by_camera = {}
-        for recording in buckets[key]:
-            by_camera.setdefault(recording.camera, []).append(recording)
-        if not all(cam in by_camera for cam in STACK_CAMERAS):
-            continue
-        # Pair each front file with I = seq+1 and R = seq+2.
-        interiors = {r.sequence: r for r in by_camera["I"]}
-        rears = {r.sequence: r for r in by_camera["R"]}
-        for front in sorted(by_camera["F"], key=lambda r: r.sequence):
-            interior = interiors.get(front.sequence + 1)
-            rear = rears.get(front.sequence + 2)
-            if interior and rear:
-                groups.append({"F": front, "I": interior, "R": rear})
+        items = buckets[key]
+        fronts = sorted((r for r in items if r.camera == "F"),
+                        key=lambda r: (r.datetime, r.sequence))
+        pools = {cam: [r for r in items if r.camera == cam]
+                 for cam in ("I", "R")}
+        used = set()
+        for front in fronts:
+            match = {}
+            for cam in ("I", "R"):
+                best = None
+                for candidate in pools[cam]:
+                    if candidate.filepath in used:
+                        continue
+                    seq_gap = abs(candidate.sequence - front.sequence)
+                    time_gap = abs(
+                        (candidate.datetime - front.datetime)
+                        .total_seconds()
+                    )
+                    if (seq_gap == 0
+                            or seq_gap > STACK_MAX_SEQUENCE_GAP
+                            or time_gap > STACK_MAX_TIME_GAP_SECONDS):
+                        continue
+                    score = (time_gap, seq_gap)
+                    if best is None or score < best[0]:
+                        best = (score, candidate)
+                if best is None:
+                    break
+                match[cam] = best[1]
+            if len(match) == 2:
+                used.add(match["I"].filepath)
+                used.add(match["R"].filepath)
+                groups.append({"F": front, "I": match["I"],
+                               "R": match["R"]})
     return groups
 
 

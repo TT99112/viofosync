@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## 1.6.1 (2026-10-03)
+
+* Camera stacking pairs each front file with the nearest interior and rear file (within 10 seconds and 3 sequence numbers) instead of requiring the same timestamp and F/I/R order, so parking clips numbered I, F, R and snapshots stamped a few seconds apart are stacked too.
+
 ## 1.6 (2026-10-02)
 
 * Several machines can stack the same library at once: each group is claimed with a `.stacklock` file, and `STACK_ORDER` / `--stack-order oldest` lets a second worker start from the other end.
